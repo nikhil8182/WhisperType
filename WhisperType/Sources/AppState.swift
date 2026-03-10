@@ -26,7 +26,11 @@ struct TranscriptionEntry: Identifiable, Codable {
 class AppState: ObservableObject {
     static let shared = AppState()
     
-    @Published var status: AppStatus = .idle
+    @Published var status: AppStatus = .idle {
+        didSet {
+            logInfo("AppState", "Status changed: \(oldValue.rawValue) → \(status.rawValue)")
+        }
+    }
     @Published var errorMessage: String?
     @Published var showOverlay: Bool = false
     @Published var history: [TranscriptionEntry] = []
@@ -36,33 +40,57 @@ class AppState: ObservableObject {
     @AppStorage("showFloatingOverlay") var showFloatingOverlay: Bool = true
     @AppStorage("playSounds") var playSounds: Bool = true
     @AppStorage("launchAtLogin") var launchAtLogin: Bool = false
-    @AppStorage("hotkeyKeyCode") var hotkeyKeyCode: Int = 61 // Right Option = key code 61
+    @AppStorage("hotkeyKeyCode") var hotkeyKeyCode: Int = 61
     @AppStorage("language") var language: String = "en"
     @AppStorage("maxHistoryCount") var maxHistoryCount: Int = 50
     
     private init() {
         loadHistory()
+        logInfo("AppState", "Initialized. Model=\(whisperModel), Language=\(language)")
+    }
+    
+    /// Thread-safe status update — always dispatches to main queue
+    func setStatus(_ newStatus: AppStatus) {
+        if Thread.isMainThread {
+            self.status = newStatus
+        } else {
+            DispatchQueue.main.async {
+                self.status = newStatus
+            }
+        }
     }
     
     func showError(_ message: String) {
-        DispatchQueue.main.async {
+        logError("AppState", "Error shown: \(message)")
+        if Thread.isMainThread {
             self.errorMessage = message
+        } else {
+            DispatchQueue.main.async {
+                self.errorMessage = message
+            }
         }
     }
     
     func addToHistory(_ entry: TranscriptionEntry) {
-        DispatchQueue.main.async {
+        let work = {
             self.history.insert(entry, at: 0)
             if self.history.count > self.maxHistoryCount {
                 self.history = Array(self.history.prefix(self.maxHistoryCount))
             }
             self.saveHistory()
+            logInfo("AppState", "Added history entry: \(entry.text.prefix(50))...")
+        }
+        if Thread.isMainThread {
+            work()
+        } else {
+            DispatchQueue.main.async { work() }
         }
     }
     
     func clearHistory() {
         history.removeAll()
         saveHistory()
+        logInfo("AppState", "History cleared")
     }
     
     private var historyURL: URL {
@@ -73,15 +101,21 @@ class AppState: ObservableObject {
     }
     
     private func saveHistory() {
-        if let data = try? JSONEncoder().encode(history) {
-            try? data.write(to: historyURL)
+        do {
+            let data = try JSONEncoder().encode(history)
+            try data.write(to: historyURL)
+        } catch {
+            logError("AppState", "Failed to save history: \(error)")
         }
     }
     
     private func loadHistory() {
-        if let data = try? Data(contentsOf: historyURL),
-           let loaded = try? JSONDecoder().decode([TranscriptionEntry].self, from: data) {
-            history = loaded
+        do {
+            let data = try Data(contentsOf: historyURL)
+            history = try JSONDecoder().decode([TranscriptionEntry].self, from: data)
+            logInfo("AppState", "Loaded \(history.count) history entries")
+        } catch {
+            logDebug("AppState", "No history to load or parse error: \(error.localizedDescription)")
         }
     }
 }

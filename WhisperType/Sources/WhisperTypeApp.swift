@@ -18,6 +18,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     let appState = AppState.shared
     
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Install crash handler FIRST
+        installCrashHandler()
+        
+        logInfo("App", "WhisperType launching...")
+        
         // Hide dock icon - menu bar only
         NSApp.setActivationPolicy(.accessory)
         
@@ -29,39 +34,75 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         // Setup global hotkey monitor
         HotkeyManager.shared.setup(appState: appState)
+        
+        logInfo("App", "WhisperType launch complete")
+    }
+    
+    func applicationWillTerminate(_ notification: Notification) {
+        logInfo("App", "WhisperType shutting down")
+    }
+    
+    private func installCrashHandler() {
+        NSSetUncaughtExceptionHandler { exception in
+            let msg = """
+            === UNCAUGHT EXCEPTION ===
+            Name: \(exception.name.rawValue)
+            Reason: \(exception.reason ?? "unknown")
+            Stack: \(exception.callStackSymbols.joined(separator: "\n"))
+            """
+            logError("CRASH", msg)
+            
+            // Force flush
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+        
+        // Handle signals
+        for sig: Int32 in [SIGABRT, SIGSEGV, SIGBUS, SIGFPE, SIGILL, SIGTRAP] {
+            signal(sig) { signalNumber in
+                logError("CRASH", "Caught signal \(signalNumber)")
+                Thread.sleep(forTimeInterval: 0.5)
+                exit(signalNumber)
+            }
+        }
+        
+        logInfo("App", "Crash handlers installed")
     }
     
     private func checkPermissions() {
+        logInfo("App", "Checking permissions...")
+        
         // Check microphone permission
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .notDetermined:
+            logInfo("App", "Mic permission not determined, requesting...")
             AVCaptureDevice.requestAccess(for: .audio) { granted in
+                logInfo("App", "Mic permission response: \(granted)")
                 if !granted {
-                    DispatchQueue.main.async {
-                        self.appState.showError("Microphone access denied. Please enable in System Settings > Privacy & Security > Microphone.")
-                    }
+                    self.appState.showError("Microphone access denied. Please enable in System Settings > Privacy & Security > Microphone.")
                 }
             }
         case .denied, .restricted:
+            logError("App", "Mic permission denied/restricted")
             appState.showError("Microphone access denied. Please enable in System Settings > Privacy & Security > Microphone.")
         case .authorized:
-            break
+            logInfo("App", "Mic permission: authorized")
         @unknown default:
-            break
+            logWarn("App", "Mic permission: unknown status")
         }
         
         // Check accessibility permission
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-        if !AXIsProcessTrustedWithOptions(options) {
+        let axTrusted = AXIsProcessTrustedWithOptions(options)
+        logInfo("App", "Accessibility permission: \(axTrusted)")
+        if !axTrusted {
             appState.showError("Accessibility access needed for global hotkey and paste. Please enable in System Settings > Privacy & Security > Accessibility.")
         }
         
         // Check whisper availability
         WhisperManager.shared.checkAvailability { available in
+            logInfo("App", "Whisper CLI available: \(available)")
             if !available {
-                DispatchQueue.main.async {
-                    self.appState.showError("Whisper CLI not found. Install with: pipx install openai-whisper")
-                }
+                self.appState.showError("Whisper CLI not found. Install with: pipx install openai-whisper")
             }
         }
     }

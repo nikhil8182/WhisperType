@@ -7,43 +7,45 @@ class TextPaster {
     private init() {}
     
     func pasteText(_ text: String) {
-        // Save current clipboard
+        logInfo("TextPaster", "Pasting text (\(text.count) chars): \(text.prefix(50))...")
+        
         let pasteboard = NSPasteboard.general
         let previousContents = pasteboard.string(forType: .string)
         
-        // Set our text to clipboard
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
         
         // Small delay to ensure pasteboard is ready
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            // Simulate Cmd+V paste
             self.simulatePaste()
+            logInfo("TextPaster", "Paste simulated")
             
             // Restore previous clipboard after a delay
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 if let previous = previousContents {
                     pasteboard.clearContents()
                     pasteboard.setString(previous, forType: .string)
+                    logDebug("TextPaster", "Clipboard restored")
                 }
             }
         }
     }
     
     private func simulatePaste() {
-        // Use CGEvent to simulate Cmd+V
-        let source = CGEventSource(stateID: .hidSystemState)
-        
-        // Key code for 'V' is 9
-        let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true)
-        let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false)
-        
-        // Add Command modifier
-        keyDown?.flags = .maskCommand
-        keyUp?.flags = .maskCommand
-        
-        // Post events
-        keyDown?.post(tap: .cghidEventTap)
-        keyUp?.post(tap: .cghidEventTap)
+        do {
+            let source = CGEventSource(stateID: .hidSystemState)
+            
+            guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
+                  let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false) else {
+                logError("TextPaster", "Failed to create CGEvent for paste")
+                return
+            }
+            
+            keyDown.flags = .maskCommand
+            keyUp.flags = .maskCommand
+            
+            keyDown.post(tap: .cghidEventTap)
+            keyUp.post(tap: .cghidEventTap)
+        }
     }
 }

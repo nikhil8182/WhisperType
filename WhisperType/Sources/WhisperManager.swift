@@ -4,9 +4,14 @@ class WhisperManager {
     static let shared = WhisperManager()
     
     private let whisperPath: String
+    private let processQueue = DispatchQueue(label: "com.whispertype.whisper", qos: .userInitiated)
+    private var currentProcess: Process?
+    private var timeoutWorkItem: DispatchWorkItem?
+    private let lock = NSLock()
+    
+    private static let whisperTimeout: TimeInterval = 60.0
     
     private init() {
-        // Try to find whisper in common locations
         let possiblePaths = [
             "/Users/onwords/.local/bin/whisper",
             "/opt/homebrew/bin/whisper",
@@ -14,23 +19,27 @@ class WhisperManager {
         ]
         
         self.whisperPath = possiblePaths.first { FileManager.default.fileExists(atPath: $0) } ?? "whisper"
+        logInfo("WhisperManager", "Initialized. Whisper path: \(whisperPath)")
+    }
+    
+    private func makeEnv() -> [String: String] {
+        var env = ProcessInfo.processInfo.environment
+        let extraPaths = "/Users/onwords/.local/bin:/opt/homebrew/bin:/usr/local/bin"
+        if let existing = env["PATH"] {
+            env["PATH"] = "\(extraPaths):\(existing)"
+        } else {
+            env["PATH"] = extraPaths
+        }
+        return env
     }
     
     func checkAvailability(completion: @escaping (Bool) -> Void) {
-        DispatchQueue.global(qos: .background).async {
+        processQueue.async { [self] in
+            logInfo("WhisperManager", "Checking whisper availability...")
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/usr/bin/which")
             process.arguments = ["whisper"]
-            
-            // Inherit PATH
-            var env = ProcessInfo.processInfo.environment
-            let extraPaths = "/Users/onwords/.local/bin:/opt/homebrew/bin:/usr/local/bin"
-            if let existing = env["PATH"] {
-                env["PATH"] = "\(extraPaths):\(existing)"
-            } else {
-                env["PATH"] = extraPaths
-            }
-            process.environment = env
+            process.environment = self.makeEnv()
             
             let pipe = Pipe()
             process.standardOutput = pipe
@@ -39,17 +48,29 @@ class WhisperManager {
             do {
                 try process.run()
                 process.waitUntilExit()
-                completion(process.terminationStatus == 0)
+                let available = process.terminationStatus == 0
+                logInfo("WhisperManager", "Whisper available: \(available)")
+                completion(available)
             } catch {
+                logError("WhisperManager", "Failed to check whisper: \(error)")
                 completion(false)
             }
         }
     }
     
     func transcribe(audioURL: URL, model: String, language: String, completion: @escaping (Result<String, Error>) -> Void) {
-        DispatchQueue.global(qos: .userInitiated).async { [self] in
+        processQueue.async { [self] in
+            logInfo("WhisperManager", "Starting transcription. Audio: \(audioURL.lastPathComponent), Model: \(model), Language: \(language)")
+            
             let outputDir = FileManager.default.temporaryDirectory.appendingPathComponent("whispertype_out_\(UUID().uuidString)")
-            try? FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
+            
+            do {
+                try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
+            } catch {
+                logError("WhisperManager", "Failed to create output dir: \(error)")
+                completion(.failure(error))
+                return
+            }
             
             let process = Process()
             process.executableURL = URL(fileURLWithPath: self.whisperPath)
@@ -59,83 +80,164 @@ class WhisperManager {
                 "--language", language,
                 "--output_format", "txt",
                 "--output_dir", outputDir.path,
-                "--fp16", "False",  // CPU doesn't support fp16
+                "--fp16", "False",
                 "--verbose", "False"
             ]
+            process.environment = self.makeEnv()
             
-            // Set up environment with proper PATH
-            var env = ProcessInfo.processInfo.environment
-            let extraPaths = "/Users/onwords/.local/bin:/opt/homebrew/bin:/usr/local/bin"
-            if let existing = env["PATH"] {
-                env["PATH"] = "\(extraPaths):\(existing)"
-            } else {
-                env["PATH"] = extraPaths
-            }
-            process.environment = env
-            
+            // Use separate pipes for stdout and stderr, read via data collection
             let stdoutPipe = Pipe()
             let stderrPipe = Pipe()
             process.standardOutput = stdoutPipe
             process.standardError = stderrPipe
             
-            // Read pipes asynchronously to avoid deadlocks
+            // Collect data from pipes asynchronously to prevent deadlock
+            let stdoutLock = NSLock()
+            let stderrLock = NSLock()
             var stdoutData = Data()
             var stderrData = Data()
             
             stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
-                stdoutData.append(handle.availableData)
+                let data = handle.availableData
+                if !data.isEmpty {
+                    stdoutLock.lock()
+                    stdoutData.append(data)
+                    stdoutLock.unlock()
+                }
             }
             stderrPipe.fileHandleForReading.readabilityHandler = { handle in
-                stderrData.append(handle.availableData)
+                let data = handle.availableData
+                if !data.isEmpty {
+                    stderrLock.lock()
+                    stderrData.append(data)
+                    stderrLock.unlock()
+                }
             }
+            
+            // Store reference for timeout killing
+            self.lock.lock()
+            self.currentProcess = process
+            self.lock.unlock()
+            
+            // Set up timeout
+            let timeout = DispatchWorkItem { [weak self] in
+                self?.lock.lock()
+                let proc = self?.currentProcess
+                self?.currentProcess = nil
+                self?.lock.unlock()
+                
+                if let proc = proc, proc.isRunning {
+                    logError("WhisperManager", "Whisper process timed out after \(WhisperManager.whisperTimeout)s — killing")
+                    proc.terminate()
+                    // Give it a moment, then force kill
+                    DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
+                        if proc.isRunning {
+                            logError("WhisperManager", "Force killing whisper process")
+                            proc.interrupt()
+                        }
+                    }
+                }
+            }
+            self.lock.lock()
+            self.timeoutWorkItem = timeout
+            self.lock.unlock()
+            DispatchQueue.global().asyncAfter(deadline: .now() + WhisperManager.whisperTimeout, execute: timeout)
             
             do {
                 try process.run()
+                logInfo("WhisperManager", "Whisper process launched (PID: \(process.processIdentifier))")
+                
                 process.waitUntilExit()
                 
-                // Stop reading
+                // Cancel timeout
+                timeout.cancel()
+                
+                // Stop reading handlers before reading final data
                 stdoutPipe.fileHandleForReading.readabilityHandler = nil
                 stderrPipe.fileHandleForReading.readabilityHandler = nil
                 
-                if process.terminationStatus != 0 {
-                    let errorString = String(data: stderrData, encoding: .utf8) ?? "Unknown error"
-                    completion(.failure(NSError(domain: "WhisperType", code: Int(process.terminationStatus), userInfo: [NSLocalizedDescriptionKey: errorString])))
-                    // Cleanup
+                // Read any remaining data
+                let remainingStdout = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+                let remainingStderr = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+                
+                stdoutLock.lock()
+                stdoutData.append(remainingStdout)
+                stdoutLock.unlock()
+                
+                stderrLock.lock()
+                stderrData.append(remainingStderr)
+                stderrLock.unlock()
+                
+                // Clear process reference
+                self.lock.lock()
+                self.currentProcess = nil
+                self.lock.unlock()
+                
+                let status = process.terminationStatus
+                logInfo("WhisperManager", "Whisper exited with status \(status)")
+                
+                if let stderrStr = String(data: stderrData, encoding: .utf8), !stderrStr.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    logDebug("WhisperManager", "Whisper stderr: \(stderrStr.prefix(500))")
+                }
+                
+                if status != 0 {
+                    let errorString = String(data: stderrData, encoding: .utf8) ?? "Unknown whisper error (exit code \(status))"
+                    logError("WhisperManager", "Whisper failed: \(errorString.prefix(300))")
+                    completion(.failure(NSError(domain: "WhisperType", code: Int(status),
+                                                userInfo: [NSLocalizedDescriptionKey: errorString])))
                     try? FileManager.default.removeItem(at: outputDir)
                     return
                 }
                 
                 // Read the output text file
-                let audioName = audioURL.deletingPathExtension().lastPathComponent
-                let txtFile = outputDir.appendingPathComponent("\(audioName).txt")
-                
-                if FileManager.default.fileExists(atPath: txtFile.path) {
-                    let text = try String(contentsOf: txtFile, encoding: .utf8)
-                    completion(.success(text))
-                } else {
-                    // Try to find any .txt file in the output dir
-                    let files = try? FileManager.default.contentsOfDirectory(at: outputDir, includingPropertiesForKeys: nil)
-                    if let txtFiles = files?.filter({ $0.pathExtension == "txt" }), let first = txtFiles.first {
-                        let text = try String(contentsOf: first, encoding: .utf8)
-                        completion(.success(text))
-                    } else {
-                        // Fall back to reading stdout
-                        let output = String(data: stdoutData, encoding: .utf8) ?? ""
-                        if output.isEmpty {
-                            completion(.failure(NSError(domain: "WhisperType", code: -1, userInfo: [NSLocalizedDescriptionKey: "No transcription output"])))
-                        } else {
-                            completion(.success(output))
-                        }
-                    }
-                }
-                
-                // Cleanup output dir
-                try? FileManager.default.removeItem(at: outputDir)
+                let text = try self.readTranscriptionOutput(audioURL: audioURL, outputDir: outputDir, stdoutData: stdoutData)
+                logInfo("WhisperManager", "Transcription result (\(text.count) chars): \(text.prefix(100))...")
+                completion(.success(text))
                 
             } catch {
+                timeout.cancel()
+                
+                self.lock.lock()
+                self.currentProcess = nil
+                self.lock.unlock()
+                
+                stdoutPipe.fileHandleForReading.readabilityHandler = nil
+                stderrPipe.fileHandleForReading.readabilityHandler = nil
+                
+                logError("WhisperManager", "Failed to run whisper: \(error)")
                 completion(.failure(error))
-                try? FileManager.default.removeItem(at: outputDir)
+            }
+            
+            // Cleanup
+            try? FileManager.default.removeItem(at: outputDir)
+        }
+    }
+    
+    private func readTranscriptionOutput(audioURL: URL, outputDir: URL, stdoutData: Data) throws -> String {
+        let audioName = audioURL.deletingPathExtension().lastPathComponent
+        let txtFile = outputDir.appendingPathComponent("\(audioName).txt")
+        
+        if FileManager.default.fileExists(atPath: txtFile.path) {
+            return try String(contentsOf: txtFile, encoding: .utf8)
+        }
+        
+        // Try to find any .txt file in the output dir
+        if let files = try? FileManager.default.contentsOfDirectory(at: outputDir, includingPropertiesForKeys: nil) {
+            let txtFiles = files.filter { $0.pathExtension == "txt" }
+            if let first = txtFiles.first {
+                logInfo("WhisperManager", "Found alternative txt file: \(first.lastPathComponent)")
+                return try String(contentsOf: first, encoding: .utf8)
             }
         }
+        
+        // Fall back to stdout
+        let output = String(data: stdoutData, encoding: .utf8) ?? ""
+        if !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            logWarn("WhisperManager", "Using stdout as transcription output")
+            return output
+        }
+        
+        throw NSError(domain: "WhisperType", code: -1,
+                       userInfo: [NSLocalizedDescriptionKey: "No transcription output found"])
     }
 }
