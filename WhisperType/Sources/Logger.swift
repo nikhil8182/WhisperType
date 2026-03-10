@@ -9,58 +9,62 @@ enum LogLevel: String {
 
 final class Logger {
     static let shared = Logger()
-    
+
     private let logFileURL: URL
     private let queue = DispatchQueue(label: "com.whispertype.logger", qos: .utility)
     private let dateFormatter: DateFormatter
     private var fileHandle: FileHandle?
-    
+
     private init() {
         let logsDir = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Logs/WhisperType")
         try? FileManager.default.createDirectory(at: logsDir, withIntermediateDirectories: true)
-        
+
         logFileURL = logsDir.appendingPathComponent("whispertype.log")
-        
-        // Create file if it doesn't exist
+
         if !FileManager.default.fileExists(atPath: logFileURL.path) {
             FileManager.default.createFile(atPath: logFileURL.path, contents: nil)
         }
-        
+
         // Truncate if over 5MB
         if let attrs = try? FileManager.default.attributesOfItem(atPath: logFileURL.path),
            let size = attrs[.size] as? UInt64, size > 5_000_000 {
             try? "".write(to: logFileURL, atomically: true, encoding: .utf8)
         }
-        
+
         dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
         dateFormatter.locale = Locale(identifier: "en_US_POSIX")
-        
+
         fileHandle = FileHandle(forWritingAtPath: logFileURL.path)
         fileHandle?.seekToEndOfFile()
-        
+
         log(.info, "Logger", "=== WhisperType started ===")
         log(.info, "Logger", "Log file: \(logFileURL.path)")
     }
-    
+
     func log(_ level: LogLevel, _ component: String, _ message: String) {
         let timestamp = dateFormatter.string(from: Date())
         let threadName = Thread.isMainThread ? "main" : "bg"
         let line = "[\(timestamp)] [\(level.rawValue)] [\(component)] [\(threadName)] \(message)\n"
-        
+
         queue.async { [weak self] in
             guard let self = self, let data = line.data(using: .utf8) else { return }
             self.fileHandle?.write(data)
+
+            // Force flush on errors
+            if level == .error || level == .warn {
+                self.fileHandle?.synchronizeFile()
+            }
         }
-        
-        // Also print to console for debugging
+
         #if DEBUG
         print(line, terminator: "")
         #endif
     }
-    
+
     deinit {
+        fileHandle?.synchronizeFile()
         fileHandle?.closeFile()
     }
 }
