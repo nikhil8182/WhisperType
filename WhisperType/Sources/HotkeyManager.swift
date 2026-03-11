@@ -67,6 +67,14 @@ class HotkeyManager {
 
     private func startRecording() {
         guard let appState = appState else { return }
+        
+        // Close onboarding window if open — its SwiftUI NSHostingView causes
+        // constraint crashes when AppState updates during recording (macOS 26 bug)
+        if !UserDefaults.standard.bool(forKey: "hasCompletedOnboarding") {
+            UserDefaults.standard.set(true, forKey: "hasCompletedOnboarding")
+            OnboardingWindowController.shared.close()
+            NSApp.setActivationPolicy(.accessory)
+        }
 
         lock.lock()
         guard !isRecording && !isProcessing else {

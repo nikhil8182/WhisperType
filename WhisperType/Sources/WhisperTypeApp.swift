@@ -20,6 +20,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         installCrashHandler()
+        
+
 
         logInfo("App", "WhisperType launching...")
 
