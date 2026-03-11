@@ -136,24 +136,39 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             appState.showError("ffmpeg not found. Install with: brew install ffmpeg")
         }
 
-        appState.updatePermissionState()
+        // Don't call updatePermissionState() here — wait for async whisper check to complete
     }
 
-    /// Periodically re-check Accessibility (user may grant it in System Settings)
+    /// Periodically re-check all permissions (user may grant them in System Settings)
     private func recheckPermissions() {
         let axTrusted = AXIsProcessTrusted()
         let micAuth = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+        let ffmpegExists = ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/usr/bin/ffmpeg"]
+            .contains { FileManager.default.fileExists(atPath: $0) }
         
         DispatchQueue.main.async {
             let changed = (self.appState.hasAccessibilityPermission != axTrusted) ||
-                          (self.appState.hasMicPermission != micAuth)
+                          (self.appState.hasMicPermission != micAuth) ||
+                          (self.appState.hasFfmpeg != ffmpegExists)
             
             self.appState.hasAccessibilityPermission = axTrusted
             self.appState.hasMicPermission = micAuth
+            self.appState.hasFfmpeg = ffmpegExists
             
             if changed {
                 self.appState.updatePermissionState()
-                logInfo("App", "Permission state changed — ax=\(axTrusted) mic=\(micAuth)")
+                logInfo("App", "Permission state changed — ax=\(axTrusted) mic=\(micAuth) ffmpeg=\(ffmpegExists)")
+            }
+        }
+        
+        // Also recheck whisper (async)
+        WhisperManager.shared.checkAvailability { available in
+            DispatchQueue.main.async {
+                if self.appState.hasWhisperCLI != available {
+                    self.appState.hasWhisperCLI = available
+                    self.appState.updatePermissionState()
+                    logInfo("App", "Whisper availability changed: \(available)")
+                }
             }
         }
     }
