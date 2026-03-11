@@ -28,6 +28,7 @@ class OnboardingWindowController {
         
         let hostingView = NSHostingView(rootView: contentView)
         hostingView.frame = NSRect(x: 0, y: 0, width: 520, height: 620)
+        hostingView.autoresizingMask = [.width, .height]
         
         let win = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 520, height: 620),
@@ -956,10 +957,8 @@ struct HowToUseStepView: View {
                 }
                 .buttonStyle(.plain)
                 .onChange(of: viewModel.isTrialRecording) { recording in
-                    if recording {
-                        pulseRecording = true
-                    } else {
-                        pulseRecording = false
+                    withAnimation {
+                        pulseRecording = recording
                     }
                 }
                 
@@ -978,13 +977,15 @@ struct HowToUseStepView: View {
                         .font(.system(size: 15, weight: .medium, design: .rounded))
                         .foregroundColor(teal)
                         .multilineTextAlignment(.center)
+                        .lineLimit(3)
+                        .fixedSize(horizontal: false, vertical: true)
                         .padding(.horizontal, 20)
                         .padding(.vertical, 8)
+                        .frame(maxWidth: 400)
                         .background(
                             RoundedRectangle(cornerRadius: 10)
                                 .fill(teal.opacity(0.1))
                         )
-                        .transition(.opacity.combined(with: .scale(scale: 0.95)))
                 }
             }
             
