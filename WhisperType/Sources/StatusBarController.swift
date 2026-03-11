@@ -183,6 +183,11 @@ class StatusBarController {
         
         menu.addItem(NSMenuItem.separator())
         
+        // Setup Wizard
+        let wizardItem = NSMenuItem(title: "Setup Wizard…", action: #selector(showSetupWizard), keyEquivalent: "")
+        wizardItem.target = self
+        menu.addItem(wizardItem)
+        
         // Check Dependencies
         let depsItem = NSMenuItem(title: "Check Dependencies…", action: #selector(checkDependencies), keyEquivalent: "d")
         depsItem.target = self
@@ -249,6 +254,23 @@ class StatusBarController {
     
     @objc private func openAccessibilitySettings() {
         TextPaster.openAccessibilitySettings()
+    }
+    
+    @objc private func showSetupWizard() {
+        // Show onboarding as a re-runnable setup wizard
+        NSApp.setActivationPolicy(.regular)
+        OnboardingWindowController.shared.show(forceShow: true)
+        
+        // Re-hide dock icon when window closes
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                NSApp.setActivationPolicy(.accessory)
+            }
+        }
     }
     
     @objc private func checkDependencies() {

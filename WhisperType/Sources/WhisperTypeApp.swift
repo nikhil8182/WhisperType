@@ -30,9 +30,37 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         statusBarController = StatusBarController(appState: appState)
 
         checkPermissions()
+
+        // Check if onboarding is needed
+        let hasCompletedOnboarding = UserDefaults.standard.bool(forKey: "hasCompletedOnboarding")
         
-        // Check dependencies — show setup window if any are missing
-        checkDependencies()
+        if !hasCompletedOnboarding {
+            // First launch — show onboarding (handles deps + permissions)
+            logInfo("App", "First launch — showing onboarding")
+            // Temporarily show dock icon during onboarding so window is visible
+            NSApp.setActivationPolicy(.regular)
+            OnboardingWindowController.shared.show()
+            
+            // Hide dock icon once onboarding window closes
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                NotificationCenter.default.addObserver(
+                    forName: NSWindow.willCloseNotification,
+                    object: nil,
+                    queue: .main
+                ) { [weak self] _ in
+                    // Small delay to let the animation finish
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                        NSApp.setActivationPolicy(.accessory)
+                        // Re-check everything after onboarding
+                        self?.recheckPermissions()
+                        WhisperManager.shared.refreshWhisperPath()
+                    }
+                }
+            }
+        } else {
+            // Normal launch — check dependencies quietly
+            checkDependencies()
+        }
 
         HotkeyManager.shared.setup(appState: appState)
 
@@ -111,7 +139,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         appState.hasAccessibilityPermission = axTrusted
         logInfo("App", "Accessibility permission: \(axTrusted)")
         
-        if !axTrusted {
+        // Accessibility alert is now handled by onboarding (step 3)
+        // Only show the old alert if onboarding was already completed
+        if !axTrusted && UserDefaults.standard.bool(forKey: "hasCompletedOnboarding") {
             showAccessibilityAlert()
         }
 
