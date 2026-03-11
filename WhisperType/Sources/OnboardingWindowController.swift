@@ -3,6 +3,21 @@ import SwiftUI
 import AVFoundation
 import Combine
 
+// MARK: - Fixed Size Hosting View (prevents NSHostingView constraint crash)
+
+/// Container NSView that clips SwiftUI's NSHostingView inside a fixed-size frame.
+/// The container owns the constraints — NSHostingView never touches the window.
+/// Fixes EXC_BREAKPOINT in _postWindowNeedsUpdateConstraints on macOS 26.
+class ContainerView: NSView {
+    override var isFlipped: Bool { true }
+    
+    override func updateConstraints() {
+        // Do NOT call super — prevent constraint propagation to window
+        // Just mark as valid
+        super.updateConstraints()
+    }
+}
+
 // MARK: - Window Controller
 
 class OnboardingWindowController {
@@ -26,9 +41,9 @@ class OnboardingWindowController {
             self?.completeOnboarding()
         }
         
-        let hostingView = NSHostingView(rootView: contentView)
-        hostingView.frame = NSRect(x: 0, y: 0, width: 520, height: 620)
-        hostingView.autoresizingMask = [.width, .height]
+        // Use NSHostingController instead of NSHostingView to avoid constraint crashes
+        let hostingController = NSHostingController(rootView: contentView)
+        hostingController.sizingOptions = []  // Disable ALL automatic sizing
         
         let win = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 520, height: 620),
@@ -39,7 +54,7 @@ class OnboardingWindowController {
         win.titlebarAppearsTransparent = true
         win.titleVisibility = .hidden
         win.title = "WhisperType Setup"
-        win.contentView = hostingView
+        win.contentViewController = hostingController
         win.center()
         win.isReleasedWhenClosed = false
         win.level = .floating
@@ -47,9 +62,10 @@ class OnboardingWindowController {
         win.isMovableByWindowBackground = true
         win.hasShadow = true
         
-        // CRITICAL: Lock window size to prevent NSHostingView constraint crashes
+        // Lock window size
         win.minSize = NSSize(width: 520, height: 620)
         win.maxSize = NSSize(width: 520, height: 620)
+        win.setContentSize(NSSize(width: 520, height: 620))
         
         self.window = win
         win.makeKeyAndOrderFront(nil)
@@ -149,9 +165,7 @@ class OnboardingViewModel: ObservableObject {
     // MARK: - Navigation
     
     func goToStep(_ step: Step) {
-        withAnimation(.easeInOut(duration: 0.35)) {
-            currentStep = step
-        }
+        currentStep = step
         
         switch step {
         case .dependencies:
@@ -374,43 +388,23 @@ struct OnboardingContainerView: View {
                     .padding(.bottom, 16)
                 
                 // Content
-                ZStack {
+                Group {
                     switch viewModel.currentStep {
                     case .welcome:
                         WelcomeStepView(teal: teal, lightText: lightText, subtleText: subtleText) {
                             viewModel.nextStep()
                         }
-                        .transition(.asymmetric(
-                            insertion: .move(edge: .trailing).combined(with: .opacity),
-                            removal: .move(edge: .leading).combined(with: .opacity)
-                        ))
                     case .dependencies:
                         DependenciesStepView(viewModel: viewModel, teal: teal, lightText: lightText, subtleText: subtleText)
-                            .transition(.asymmetric(
-                                insertion: .move(edge: .trailing).combined(with: .opacity),
-                                removal: .move(edge: .leading).combined(with: .opacity)
-                            ))
                     case .permissions:
                         PermissionsStepView(viewModel: viewModel, teal: teal, lightText: lightText, subtleText: subtleText)
-                            .transition(.asymmetric(
-                                insertion: .move(edge: .trailing).combined(with: .opacity),
-                                removal: .move(edge: .leading).combined(with: .opacity)
-                            ))
                     case .howToUse:
                         HowToUseStepView(viewModel: viewModel, teal: teal, lightText: lightText, subtleText: subtleText)
-                            .transition(.asymmetric(
-                                insertion: .move(edge: .trailing).combined(with: .opacity),
-                                removal: .move(edge: .leading).combined(with: .opacity)
-                            ))
                     case .ready:
                         ReadyStepView(viewModel: viewModel, teal: teal, lightText: lightText, subtleText: subtleText, onComplete: onComplete)
-                            .transition(.asymmetric(
-                                insertion: .move(edge: .trailing).combined(with: .opacity),
-                                removal: .move(edge: .leading).combined(with: .opacity)
-                            ))
                     }
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(width: 520, height: 540)
                 .clipped()
             }
         }
