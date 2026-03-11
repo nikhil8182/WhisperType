@@ -1,184 +1,169 @@
-<div align="center">
+# WhisperType
 
-# 🎤 WhisperType
-
-**Native macOS voice-to-text input — hold a key, speak, release.**  
-Whisper transcribes locally and pastes anywhere. No cloud. No API keys. No subscriptions.
-
-[![Platform](https://img.shields.io/badge/platform-macOS%2013%2B-blue?logo=apple)](https://www.apple.com/macos/)
-[![Swift](https://img.shields.io/badge/Swift-5.9%2B-FA7343?logo=swift&logoColor=white)](https://swift.org)
+[![GitHub release](https://img.shields.io/github/v/release/nikhil8182/WhisperType?label=Download&color=blue)](https://github.com/nikhil8182/WhisperType/releases/latest)
+[![Platform](https://img.shields.io/badge/platform-macOS%2013%2B-lightgrey?logo=apple)](https://www.apple.com/macos/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Binary Size](https://img.shields.io/badge/binary-%3C%20500KB-brightgreen)](https://github.com/nikhil8182/WhisperType/releases)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
-<br/>
+**Voice-to-text for macOS — just hold a key and speak.**
 
-<!-- Replace with actual GIF once recorded -->
-> 🎬 **Demo GIF coming soon** — Hold Right Option → speak → release → text appears!
+WhisperType is a lightweight menu bar app that transcribes your voice and pastes the text into any active application. Hold the Right Option key to record, release to transcribe and paste. Powered by OpenAI's Whisper, running entirely on your Mac — no cloud, no API keys, no subscriptions.
 
-</div>
+<!-- ![WhisperType Screenshot](screenshot.png) -->
 
----
+## Features
 
-## ✨ What is WhisperType?
+- 🎙 **Push-to-talk** — Hold Right Option key to record, release to transcribe
+- ⚡ **Instant paste** — Transcribed text is automatically pasted into the active app
+- 🔒 **100% local** — Audio never leaves your Mac. Whisper runs on-device
+- 🎯 **Multiple models** — Choose from tiny, base, small, medium, or turbo
+- 🌍 **Multi-language** — Supports English, Tamil, Hindi, Spanish, French, German, Japanese, Chinese, and auto-detect
+- 📋 **History** — Browse and copy recent transcriptions
+- 🔊 **Sound effects** — Audio feedback for start/stop recording
+- 💬 **Floating overlay** — Visual indicator while recording/transcribing
+- 🚀 **Launch at login** — Optional auto-start via macOS Login Items
+- ⚙️ **Preferences** — Full settings panel with model, language, and history management
 
-WhisperType is a tiny but powerful macOS menu bar app that turns your voice into typed text — **instantly and privately**. It uses [OpenAI's Whisper](https://github.com/openai/whisper) running entirely on your Mac. Your audio never leaves your machine.
+## Requirements
 
-### How it works
+- **macOS 13.0** (Ventura) or later
+- **Apple Silicon** (M1/M2/M3) or Intel Mac
+- **OpenAI Whisper CLI** — local transcription engine
+- **ffmpeg** — audio processing
 
+## Installation
+
+### Pre-built App (Recommended)
+
+**[⬇️ Download WhisperType-1.1.0.dmg](https://github.com/nikhil8182/WhisperType/releases/latest)**
+
+1. Download the DMG from the link above
+2. Open the DMG — drag **WhisperType** to the **Applications** folder
+3. Launch WhisperType — grant Microphone and Accessibility permissions when prompted
+
+> All releases: [github.com/nikhil8182/WhisperType/releases](https://github.com/nikhil8182/WhisperType/releases)
+
+### Install Dependencies
+
+```bash
+# Install Whisper CLI
+pipx install openai-whisper
+
+# Install ffmpeg
+brew install ffmpeg
 ```
-Hold Right Option  →  🔴 Recording starts
-       Speak       →  🟡 Whisper transcribes (locally)
-  Release key      →  ✅ Text auto-pastes at your cursor
-```
 
-Works in **any app** — Terminal, VS Code, Safari, Notes, Slack, Xcode, you name it.
-
----
-
-## 🚀 Features
-
-| Feature | Details |
-|---|---|
-| 🎤 **Hold-to-record** | Right Option key (configurable) — hold to record, release to transcribe |
-| 🎯 **Works everywhere** | Any focusable app — Terminal, VS Code, Safari, Slack, Notes |
-| 🔒 **100% local** | Whisper runs on your Mac — zero data leaves your machine |
-| 📊 **Menu bar status** | Live state: Idle → Recording → Transcribing → Done |
-| 🔴 **Floating overlay** | Always-visible status indicator while recording |
-| 📋 **Transcription history** | Local log of all your dictations |
-| 🔊 **Audio feedback** | System sounds on record start/stop |
-| ⚙️ **Model selection** | Choose accuracy vs speed: `tiny` / `base` / `small` / `medium` |
-| 🧹 **Auto-cleanup** | Temp WAV files deleted after transcription |
-| 📋 **Clipboard-safe** | Your clipboard is preserved and restored after paste |
-| 🚀 **Start at login** | Optional launch-at-login support |
-| 🪶 **Lightweight** | Under 500KB binary |
-
----
-
-## 📦 Requirements
-
-- **macOS 13 Ventura** or later (Apple Silicon or Intel)
-- **Whisper CLI** installed via pipx:
-  ```bash
-  pipx install openai-whisper
-  ```
-- **Microphone permission** — granted once on first launch
-- **Accessibility permission** — for global hotkey + paste injection
-
-> 💡 First-time Whisper run will download the model (~74MB for `tiny`, ~1.5GB for `medium`). After that, it's fully offline.
-
----
-
-## 🛠 Installation
-
-### Option 1 — Build from source (recommended)
+### Build from Source
 
 ```bash
 # Clone the repo
 git clone https://github.com/nikhil8182/WhisperType.git
 cd WhisperType
 
-# Build release binary
-swift build -c release
-
-# (Optional) Move to Applications
-cp -r .build/release/WhisperType.app /Applications/
+# Build and install
+./build-app.sh --install
 ```
 
-### Option 2 — Download release binary
+## Usage
 
-> 📦 Pre-built `.app` releases coming soon — check the [Releases](https://github.com/nikhil8182/WhisperType/releases) page.
+1. **Launch** WhisperType — it appears as a microphone icon in your menu bar
+2. **Hold Right Option (⌥)** key to start recording
+3. **Speak** clearly
+4. **Release** the key — your speech is transcribed and pasted into the active text field
 
----
+### Menu Bar
 
-## 📸 Screenshots
+Click the menu bar icon to:
+- See recording status and permission state
+- View and copy recent transcriptions
+- Switch Whisper models
+- Toggle overlay and sound effects
+- Access Settings and About
 
-<!-- Add screenshots here once available -->
+### Settings
 
-> 🖼️ **Screenshots coming soon**
->
-> _Menu bar icon · Status overlay · Settings panel · Transcription history_
+Open Settings (`⌘,` or via menu) to configure:
+- **General** — Hotkey, overlay, sounds, launch at login
+- **Transcription** — Whisper model and language
+- **History** — Max items, clear history, browse past transcriptions
 
----
+## Whisper Models
 
-## 🏗 Architecture
+| Model | RAM | Speed | Accuracy |
+|-------|-----|-------|----------|
+| tiny | ~1 GB | Fastest | Basic |
+| base | ~1 GB | Fast | Good (recommended) |
+| small | ~2 GB | Moderate | Better |
+| medium | ~5 GB | Slow | High |
+| turbo | ~6 GB | Fast | Best trade-off |
 
-WhisperType is clean, modular, and ~10 Swift source files:
+## Permissions
 
-```
-WhisperType/Sources/
-├── WhisperTypeApp.swift          # Entry point, permission requests
-├── AppState.swift                # Shared state, settings, history
-├── HotkeyManager.swift           # Global hotkey monitoring (CGEvent)
-├── AudioRecorder.swift           # AVFoundation — 16kHz mono WAV
-├── WhisperManager.swift          # Whisper CLI subprocess manager
-├── TextPaster.swift              # CGEvent paste + clipboard restore
-├── StatusBarController.swift     # Menu bar UI
-├── OverlayWindowController.swift # Floating status overlay
-├── SoundManager.swift            # System audio feedback
-└── SettingsView.swift            # SwiftUI settings panel
-```
+WhisperType requires two macOS permissions:
 
-**Tech stack:** Swift + SwiftUI · AVFoundation · CGEvent · Whisper CLI (subprocess)
+1. **Microphone** — To record audio (prompted automatically)
+2. **Accessibility** — To paste text via keyboard simulation (must be enabled manually in System Settings → Privacy & Security → Accessibility)
 
----
+The app will guide you through setup on first launch.
 
-## ⚙️ Configuration
+## Troubleshooting
 
-All settings are accessible from the menu bar icon → **Settings**:
-
-- **Hotkey** — Default: Right Option. Remappable.
-- **Whisper model** — `tiny` (fast) → `medium` (accurate)
-- **Language** — Auto-detect or lock to a language
-- **Start at login** — Toggle launch-at-login
-- **History** — View / clear transcription history
-
----
-
-## 🔐 Privacy
-
-WhisperType is built privacy-first:
-
-- ✅ No network calls — ever
-- ✅ No telemetry, no analytics
-- ✅ Whisper runs as a local subprocess
-- ✅ Audio files are deleted immediately after transcription
-- ✅ Clipboard restored to original content after paste
-- ✅ Open source — audit it yourself
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Whether it's bug fixes, new features, documentation, or translations.
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
+**"Whisper CLI not found"**
 ```bash
-# Fork → Clone → Branch → Code → PR
-git checkout -b feature/my-cool-feature
+pipx install openai-whisper
+# or
+pip install openai-whisper
 ```
 
+**"Accessibility not granted"**
+1. Open System Settings → Privacy & Security → Accessibility
+2. Click the lock to make changes
+3. Add WhisperType.app and enable it
+4. Restart WhisperType
+
+**No transcription output**
+- Make sure your microphone is working (test in Voice Memos)
+- Try a longer recording (> 0.5 seconds)
+- Check `~/Library/Logs/WhisperType/whispertype.log` for errors
+
+## Project Structure
+
+```
+WhisperType/
+├── Package.swift              # Swift Package Manager config
+├── build-app.sh               # Build & install script
+├── scripts/
+│   ├── generate_icon.py       # App icon generator
+│   └── generate_menubar_icon.py
+└── WhisperType/
+    ├── Info.plist
+    ├── WhisperType.entitlements
+    ├── Resources/
+    │   ├── MenuBarIcon.png
+    │   └── MenuBarIcon@2x.png
+    └── Sources/
+        ├── WhisperTypeApp.swift       # App entry point & delegate
+        ├── AppState.swift             # Shared state & settings
+        ├── StatusBarController.swift  # Menu bar UI
+        ├── HotkeyManager.swift        # Right Option key handling
+        ├── AudioRecorder.swift        # AVAudioEngine recording
+        ├── WhisperManager.swift       # Whisper CLI integration
+        ├── TextPaster.swift           # Cmd+V paste via CGEvent
+        ├── OverlayWindowController.swift # Floating status overlay
+        ├── SettingsView.swift         # SwiftUI preferences
+        ├── SoundManager.swift         # System sound effects
+        └── Logger.swift               # File-based logging
+```
+
+## License
+
+MIT License — see [LICENSE](LICENSE) for details.
+
+## Credits
+
+Built by **[Nikhil](https://github.com/nikhil8182)** · [Onwords Smart Solutions](https://onwords.in) 🇮🇳
+
+Powered by [OpenAI Whisper](https://github.com/openai/whisper).
+
 ---
 
-## 📜 License
-
-MIT — see [LICENSE](LICENSE) for details.
-
----
-
-## 👨‍💻 Author
-
-Built by **Nikhil** ([@nikhil8182](https://github.com/nikhil8182)) with AI assistance.
-
-> _"I built this because I type too slow and talk too fast."_
-
----
-
-<div align="center">
-
-**If WhisperType saves you time, give it a ⭐ — it means a lot!**
-
-[⭐ Star on GitHub](https://github.com/nikhil8182/WhisperType) · [🐛 Report a Bug](https://github.com/nikhil8182/WhisperType/issues) · [💡 Request a Feature](https://github.com/nikhil8182/WhisperType/issues)
-
-</div>
+[⭐ Star on GitHub](https://github.com/nikhil8182/WhisperType) · [🐛 Report a Bug](https://github.com/nikhil8182/WhisperType/issues) · [⬇️ Download Latest](https://github.com/nikhil8182/WhisperType/releases/latest)

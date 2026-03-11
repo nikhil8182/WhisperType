@@ -16,6 +16,7 @@ struct WhisperTypeApp: App {
 class AppDelegate: NSObject, NSApplicationDelegate {
     var statusBarController: StatusBarController!
     let appState = AppState.shared
+    private var permissionCheckTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         installCrashHandler()
@@ -32,10 +33,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         HotkeyManager.shared.setup(appState: appState)
 
+        // Periodically re-check permissions (user may grant them later)
+        permissionCheckTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+            self?.recheckPermissions()
+        }
+
         logInfo("App", "WhisperType launch complete")
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        permissionCheckTimer?.invalidate()
         logInfo("App", "WhisperType shutting down")
         AudioRecorder.shared.forceReset()
     }
@@ -71,47 +78,108 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func checkPermissions() {
         logInfo("App", "Checking permissions...")
 
-        // Microphone
+        // --- Microphone ---
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .notDetermined:
             logInfo("App", "Mic permission not determined, requesting...")
             AVCaptureDevice.requestAccess(for: .audio) { granted in
                 logInfo("App", "Mic permission response: \(granted)")
-                if !granted {
-                    self.appState.showError("Microphone access denied. Enable in System Settings > Privacy & Security > Microphone.")
+                DispatchQueue.main.async {
+                    self.appState.hasMicPermission = granted
+                    if !granted {
+                        self.appState.showError("Microphone access denied. Enable in System Settings > Privacy & Security > Microphone.")
+                    }
+                    self.appState.updatePermissionState()
                 }
             }
         case .denied, .restricted:
             logError("App", "Mic permission denied/restricted")
+            appState.hasMicPermission = false
             appState.showError("Microphone access denied. Enable in System Settings > Privacy & Security > Microphone.")
         case .authorized:
             logInfo("App", "Mic permission: authorized")
+            appState.hasMicPermission = true
         @unknown default:
             logWarn("App", "Mic permission: unknown status")
         }
 
-        // Accessibility
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-        let axTrusted = AXIsProcessTrustedWithOptions(options)
+        // --- Accessibility ---
+        let axTrusted = AXIsProcessTrusted()
+        appState.hasAccessibilityPermission = axTrusted
         logInfo("App", "Accessibility permission: \(axTrusted)")
+        
         if !axTrusted {
-            appState.showError("Accessibility access needed for global hotkey and paste. Enable in System Settings > Privacy & Security > Accessibility.")
+            showAccessibilityAlert()
         }
 
-        // Whisper CLI
+        // --- Whisper CLI ---
         WhisperManager.shared.checkAvailability { available in
-            logInfo("App", "Whisper CLI available: \(available)")
-            if !available {
-                self.appState.showError("Whisper CLI not found. Install with: pipx install openai-whisper")
+            DispatchQueue.main.async {
+                self.appState.hasWhisperCLI = available
+                logInfo("App", "Whisper CLI available: \(available)")
+                if !available {
+                    self.appState.showError("Whisper CLI not found. Install with: pipx install openai-whisper")
+                }
+                self.appState.updatePermissionState()
             }
         }
 
-        // ffmpeg (required for recording)
+        // --- ffmpeg ---
         let ffmpegExists = ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/usr/bin/ffmpeg"]
             .contains { FileManager.default.fileExists(atPath: $0) }
+        appState.hasFfmpeg = ffmpegExists
         logInfo("App", "ffmpeg available: \(ffmpegExists)")
         if !ffmpegExists {
             appState.showError("ffmpeg not found. Install with: brew install ffmpeg")
+        }
+
+        appState.updatePermissionState()
+    }
+
+    /// Periodically re-check Accessibility (user may grant it in System Settings)
+    private func recheckPermissions() {
+        let axTrusted = AXIsProcessTrusted()
+        let micAuth = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+        
+        DispatchQueue.main.async {
+            let changed = (self.appState.hasAccessibilityPermission != axTrusted) ||
+                          (self.appState.hasMicPermission != micAuth)
+            
+            self.appState.hasAccessibilityPermission = axTrusted
+            self.appState.hasMicPermission = micAuth
+            
+            if changed {
+                self.appState.updatePermissionState()
+                logInfo("App", "Permission state changed — ax=\(axTrusted) mic=\(micAuth)")
+            }
+        }
+    }
+
+    /// Show a clear alert for Accessibility permission with button to open Settings
+    private func showAccessibilityAlert() {
+        DispatchQueue.main.async {
+            let alert = NSAlert()
+            alert.messageText = "Accessibility Permission Required"
+            alert.informativeText = """
+            WhisperType needs Accessibility access to paste transcribed text into your apps.
+            
+            Click "Open Settings" to grant access:
+            1. Click the + button
+            2. Navigate to WhisperType.app and add it
+            3. Toggle it ON
+            
+            You may need to restart WhisperType after granting access.
+            """
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "Open Settings")
+            alert.addButton(withTitle: "Later")
+            
+            NSApp.activate(ignoringOtherApps: true)
+            let response = alert.runModal()
+            
+            if response == .alertFirstButtonReturn {
+                TextPaster.openAccessibilitySettings()
+            }
         }
     }
 }

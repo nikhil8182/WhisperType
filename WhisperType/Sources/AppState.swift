@@ -1,10 +1,17 @@
 import SwiftUI
 import Combine
+import AVFoundation
 
 enum AppStatus: String {
     case idle = "Idle"
     case recording = "Recording..."
     case transcribing = "Transcribing..."
+}
+
+enum PermissionState: String {
+    case ready = "🟢 Ready"
+    case missingPermissions = "🟡 Missing Permissions"
+    case error = "🔴 Error"
 }
 
 struct TranscriptionEntry: Identifiable, Codable {
@@ -34,6 +41,11 @@ class AppState: ObservableObject {
     @Published var errorMessage: String?
     @Published var showOverlay: Bool = false
     @Published var history: [TranscriptionEntry] = []
+    @Published var permissionState: PermissionState = .missingPermissions
+    @Published var hasMicPermission: Bool = false
+    @Published var hasAccessibilityPermission: Bool = false
+    @Published var hasWhisperCLI: Bool = false
+    @Published var hasFfmpeg: Bool = false
     
     // Settings
     @AppStorage("whisperModel") var whisperModel: String = "base"
@@ -69,6 +81,32 @@ class AppState: ObservableObject {
                 self.errorMessage = message
             }
         }
+    }
+    
+    /// Re-check all permissions and update overall state
+    func refreshPermissions() {
+        let mic = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+        let ax = AXIsProcessTrusted()
+        
+        let update = {
+            self.hasMicPermission = mic
+            self.hasAccessibilityPermission = ax
+            self.updatePermissionState()
+        }
+        
+        if Thread.isMainThread { update() }
+        else { DispatchQueue.main.async { update() } }
+    }
+    
+    func updatePermissionState() {
+        if hasMicPermission && hasAccessibilityPermission && hasWhisperCLI && hasFfmpeg {
+            permissionState = .ready
+        } else if !hasMicPermission || !hasAccessibilityPermission {
+            permissionState = .missingPermissions
+        } else {
+            permissionState = .error
+        }
+        logInfo("AppState", "Permission state: \(permissionState.rawValue) [mic=\(hasMicPermission) ax=\(hasAccessibilityPermission) whisper=\(hasWhisperCLI) ffmpeg=\(hasFfmpeg)]")
     }
     
     func addToHistory(_ entry: TranscriptionEntry) {

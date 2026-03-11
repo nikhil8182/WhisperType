@@ -122,12 +122,13 @@ import AVFoundation
 struct TranscriptionSettingsView: View {
     @EnvironmentObject var appState: AppState
     
-    let models = ["tiny", "base", "small", "medium"]
+    let models = ["tiny", "base", "small", "medium", "turbo"]
     let modelDescriptions = [
         "tiny": "~1GB RAM, fastest, least accurate",
         "base": "~1GB RAM, good balance (recommended)",
         "small": "~2GB RAM, better accuracy",
-        "medium": "~5GB RAM, best accuracy, slowest"
+        "medium": "~5GB RAM, high accuracy, slower",
+        "turbo": "~6GB RAM, best speed/accuracy trade-off"
     ]
     
     var body: some View {

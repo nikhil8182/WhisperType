@@ -38,6 +38,13 @@ class StatusBarController {
             }
             .store(in: &cancellables)
         
+        appState.$permissionState
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.updateMenu()
+            }
+            .store(in: &cancellables)
+        
         appState.$errorMessage
             .compactMap { $0 }
             .receive(on: DispatchQueue.main)
@@ -69,10 +76,55 @@ class StatusBarController {
     private func updateMenu() {
         let menu = NSMenu()
         
-        // Status
+        // Permission status indicator
+        let permItem = NSMenuItem(title: appState.permissionState.rawValue, action: nil, keyEquivalent: "")
+        permItem.isEnabled = false
+        menu.addItem(permItem)
+        
+        // Show missing permissions detail
+        if appState.permissionState != .ready {
+            if !appState.hasMicPermission {
+                let micItem = NSMenuItem(title: "  ⚠️ Microphone: Not Granted", action: nil, keyEquivalent: "")
+                micItem.isEnabled = false
+                menu.addItem(micItem)
+            }
+            if !appState.hasAccessibilityPermission {
+                let axItem = NSMenuItem(title: "  ⚠️ Accessibility: Not Granted", action: #selector(openAccessibilitySettings), keyEquivalent: "")
+                axItem.target = self
+                menu.addItem(axItem)
+            }
+            if !appState.hasWhisperCLI {
+                let whisperItem = NSMenuItem(title: "  ⚠️ Whisper CLI: Not Found", action: nil, keyEquivalent: "")
+                whisperItem.isEnabled = false
+                menu.addItem(whisperItem)
+            }
+            if !appState.hasFfmpeg {
+                let ffmpegItem = NSMenuItem(title: "  ⚠️ ffmpeg: Not Found", action: nil, keyEquivalent: "")
+                ffmpegItem.isEnabled = false
+                menu.addItem(ffmpegItem)
+            }
+            
+            let fixItem = NSMenuItem(title: "Request Accessibility Access…", action: #selector(openAccessibilitySettings), keyEquivalent: "")
+            fixItem.target = self
+            menu.addItem(fixItem)
+        }
+        
+        menu.addItem(NSMenuItem.separator())
+        
+        // App Status
         let statusItem = NSMenuItem(title: appState.status.rawValue, action: nil, keyEquivalent: "")
         statusItem.isEnabled = false
         menu.addItem(statusItem)
+        
+        // Last transcription preview
+        if let lastEntry = appState.history.first {
+            let preview = String(lastEntry.text.prefix(45)) + (lastEntry.text.count > 45 ? "…" : "")
+            let lastItem = NSMenuItem(title: "Last: \(preview)", action: #selector(copyLastTranscription), keyEquivalent: "")
+            lastItem.target = self
+            lastItem.toolTip = "Click to copy: \(lastEntry.text)"
+            menu.addItem(lastItem)
+        }
+        
         menu.addItem(NSMenuItem.separator())
         
         // Recent transcriptions
@@ -104,7 +156,7 @@ class StatusBarController {
         
         // Model selection
         let modelMenu = NSMenu()
-        for model in ["tiny", "base", "small", "medium"] {
+        for model in ["tiny", "base", "small", "medium", "turbo"] {
             let item = NSMenuItem(title: model, action: #selector(selectModel(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = model
@@ -130,6 +182,11 @@ class StatusBarController {
         menu.addItem(soundItem)
         
         menu.addItem(NSMenuItem.separator())
+        
+        // Refresh permissions
+        let refreshItem = NSMenuItem(title: "Refresh Permissions", action: #selector(refreshPermissions), keyEquivalent: "r")
+        refreshItem.target = self
+        menu.addItem(refreshItem)
         
         // Settings
         let settingsItem = NSMenuItem(title: "Settings...", action: #selector(openSettings), keyEquivalent: ",")
@@ -160,6 +217,13 @@ class StatusBarController {
         showNotification(title: "Copied", body: String(text.prefix(50)))
     }
     
+    @objc private func copyLastTranscription() {
+        guard let lastEntry = appState.history.first else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(lastEntry.text, forType: .string)
+        showNotification(title: "Copied", body: String(lastEntry.text.prefix(50)))
+    }
+    
     @objc private func clearHistory() {
         appState.clearHistory()
     }
@@ -178,18 +242,39 @@ class StatusBarController {
         appState.playSounds.toggle()
     }
     
+    @objc private func openAccessibilitySettings() {
+        TextPaster.openAccessibilitySettings()
+    }
+    
+    @objc private func refreshPermissions() {
+        appState.refreshPermissions()
+        showNotification(title: "WhisperType", body: "Permissions refreshed: \(appState.permissionState.rawValue)")
+    }
+    
     @objc private func openSettings() {
         NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
         NSApp.activate(ignoringOtherApps: true)
     }
     
     @objc private func showAbout() {
-        let alert = NSAlert()
-        alert.messageText = "WhisperType"
-        alert.informativeText = "Hold Right Option to record voice, release to transcribe and paste.\n\nVersion 1.0\nPowered by OpenAI Whisper"
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: "OK")
-        alert.runModal()
+        let credits = NSAttributedString(
+            string: "by Onwords Smart Solutions\nonwords.in",
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 11),
+                .foregroundColor: NSColor.secondaryLabelColor
+            ]
+        )
+        
+        let options: [NSApplication.AboutPanelOptionKey: Any] = [
+            .applicationName: "WhisperType",
+            .applicationVersion: "1.1.0",
+            .version: "2",
+            .credits: credits,
+            .applicationIcon: NSApp.applicationIconImage as Any
+        ]
+        
+        NSApp.activate(ignoringOtherApps: true)
+        NSApp.orderFrontStandardAboutPanel(options: options)
     }
     
     @objc private func quit() {

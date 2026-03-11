@@ -5,19 +5,33 @@ PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BUILD_DIR="$PROJECT_DIR/build"
 APP_NAME="WhisperType"
 APP_BUNDLE="$BUILD_DIR/$APP_NAME.app"
+ENTITLEMENTS="$PROJECT_DIR/WhisperType/WhisperType.entitlements"
+INSTALL_DIR="/Applications/$APP_NAME.app"
 
-echo "🔨 Building WhisperType..."
+echo "╔══════════════════════════════════════╗"
+echo "║    WhisperType Build v1.1.0          ║"
+echo "║    by Onwords Smart Solutions        ║"
+echo "╚══════════════════════════════════════╝"
+echo ""
 
-# Build release
+# --- Step 1: Build release binary ---
+echo "🔨 Building release binary..."
 cd "$PROJECT_DIR"
 swift build -c release 2>&1
 
+# --- Step 2: Generate icons ---
+echo ""
+echo "🎨 Generating app icon..."
+python3 "$PROJECT_DIR/scripts/generate_icon.py"
+
+echo "🎨 Generating menu bar icons..."
+python3 "$PROJECT_DIR/scripts/generate_menubar_icon.py"
+
+# --- Step 3: Create app bundle ---
+echo ""
 echo "📦 Creating app bundle..."
 
-# Clean previous build
 rm -rf "$APP_BUNDLE"
-
-# Create app bundle structure
 mkdir -p "$APP_BUNDLE/Contents/MacOS"
 mkdir -p "$APP_BUNDLE/Contents/Resources"
 
@@ -27,68 +41,74 @@ cp ".build/release/WhisperType" "$APP_BUNDLE/Contents/MacOS/WhisperType"
 # Copy Info.plist
 cp "WhisperType/Info.plist" "$APP_BUNDLE/Contents/Info.plist"
 
+# Copy entitlements
+cp "$ENTITLEMENTS" "$APP_BUNDLE/Contents/Resources/WhisperType.entitlements"
+
+# Copy app icon
+if [ -f "$BUILD_DIR/AppIcon.icns" ]; then
+    cp "$BUILD_DIR/AppIcon.icns" "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
+    echo "  ✅ App icon included"
+fi
+
+# Copy menu bar icons
+if [ -d "$PROJECT_DIR/WhisperType/Resources" ]; then
+    cp "$PROJECT_DIR/WhisperType/Resources/"*.png "$APP_BUNDLE/Contents/Resources/" 2>/dev/null || true
+    echo "  ✅ Menu bar icons included"
+fi
+
 # Create PkgInfo
 echo -n "APPL????" > "$APP_BUNDLE/Contents/PkgInfo"
 
-# Create a simple icon (using system icon via iconutil)
-# For now, we'll use a placeholder approach
-ICONSET_DIR="$BUILD_DIR/WhisperType.iconset"
-mkdir -p "$ICONSET_DIR"
-
-# Generate icon images using sips from a system icon
-# We'll create a simple colored circle icon
-python3 -c "
-import subprocess, os, tempfile
-
-iconset_dir = '$ICONSET_DIR'
-sizes = [(16,1), (16,2), (32,1), (32,2), (128,1), (128,2), (256,1), (256,2), (512,1), (512,2)]
-
-for size, scale in sizes:
-    actual = size * scale
-    suffix = f'icon_{size}x{size}' + (f'@{scale}x' if scale > 1 else '')
-    filepath = os.path.join(iconset_dir, f'{suffix}.png')
-    
-    # Use CoreGraphics via Python to create a mic icon
-    subprocess.run([
-        'python3', '-c', f'''
-import Cocoa, AppKit
-size = {actual}
-img = AppKit.NSImage(size=Cocoa.NSSize(size, size))
-img.lockFocus()
-
-# Background circle
-path = AppKit.NSBezierPath(ovalIn=Cocoa.NSRect(Cocoa.NSPoint(size*0.05, size*0.05), Cocoa.NSSize(size*0.9, size*0.9)))
-AppKit.NSColor(red=0.2, green=0.6, blue=1.0, alpha=1.0).setFill()
-path.fill()
-
-# Draw mic symbol
-attrs = {{
-    AppKit.NSAttributedString.Key.font: AppKit.NSFont.systemFont(ofSize=size*0.5, weight=AppKit.NSFont.Weight.bold),
-    AppKit.NSAttributedString.Key.foregroundColor: AppKit.NSColor.white,
-}}
-mic = Cocoa.NSAttributedString.alloc().initWithString_attributes_(\"🎙\", attrs)
-mic_size = mic.size()
-mic.drawAtPoint_(Cocoa.NSPoint((size - mic_size.width)/2, (size - mic_size.height)/2))
-
-img.unlockFocus()
-tiff = img.TIFFRepresentation()
-bitmap = AppKit.NSBitmapImageRep(data=tiff)
-png = bitmap.representationUsingType_properties_(AppKit.NSBitmapImageRep.FileType.png, {{}})
-png.writeToFile_atomically_(\"{filepath}\", True)
-'''], check=True)
-" 2>/dev/null || echo "⚠️  Icon generation skipped (optional)"
-
-# Try to create icns
-if [ -d "$ICONSET_DIR" ] && [ "$(ls -A "$ICONSET_DIR" 2>/dev/null)" ]; then
-    iconutil -c icns "$ICONSET_DIR" -o "$APP_BUNDLE/Contents/Resources/AppIcon.icns" 2>/dev/null || true
-fi
-rm -rf "$ICONSET_DIR"
-
-echo "✅ App bundle created at: $APP_BUNDLE"
+# --- Step 4: Code signing ---
 echo ""
-echo "To run: open \"$APP_BUNDLE\""
+echo "🔐 Code signing..."
+codesign --force --deep --sign - \
+    --entitlements "$ENTITLEMENTS" \
+    --preserve-metadata=entitlements,identifier \
+    "$APP_BUNDLE" 2>&1 || {
+        echo "⚠️  Signing with entitlements failed, trying basic..."
+        codesign --force --deep --sign - "$APP_BUNDLE" 2>&1 || echo "⚠️  Code signing skipped"
+    }
+
+# Verify
+echo "🔍 Verifying signature..."
+codesign -dvv "$APP_BUNDLE" 2>&1 | grep -E "Identifier|Authority|TeamIdentifier" || true
+
+# --- Step 5: Report ---
+echo ""
+APP_SIZE=$(du -sh "$APP_BUNDLE" | awk '{print $1}')
+BINARY_SIZE=$(du -sh "$APP_BUNDLE/Contents/MacOS/WhisperType" | awk '{print $1}')
+echo "═══════════════════════════════════════"
+echo "  ✅ Build complete!"
+echo "  📍 $APP_BUNDLE"
+echo "  📏 App size: $APP_SIZE"
+echo "  📏 Binary: $BINARY_SIZE"
+echo "  📋 Version: 1.1.0 (build 2)"
+echo "═══════════════════════════════════════"
+
+# --- Step 6: Install (optional) ---
+if [ "$1" = "--install" ] || [ "$1" = "-i" ]; then
+    echo ""
+    echo "📲 Installing to /Applications..."
+    
+    killall WhisperType 2>/dev/null || true
+    sleep 1
+    
+    rm -rf "$INSTALL_DIR"
+    cp -R "$APP_BUNDLE" "$INSTALL_DIR"
+    
+    echo "✅ Installed to $INSTALL_DIR"
+    echo ""
+    echo "🚀 Launching WhisperType..."
+    open "$INSTALL_DIR"
+else
+    echo ""
+    echo "To install: $0 --install"
+    echo "To run:     open \"$APP_BUNDLE\""
+fi
+
 echo ""
 echo "⚠️  First run setup:"
 echo "  1. Grant Microphone access when prompted"
-echo "  2. Grant Accessibility access in System Settings > Privacy & Security > Accessibility"
-echo "  3. Hold Right Option key to record, release to transcribe & paste"
+echo "  2. Grant Accessibility in System Settings → Privacy & Security"
+echo "  3. Hold Right Option to record, release to transcribe & paste"
