@@ -30,6 +30,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         statusBarController = StatusBarController(appState: appState)
 
         checkPermissions()
+        
+        // Check dependencies — show setup window if any are missing
+        checkDependencies()
 
         HotkeyManager.shared.setup(appState: appState)
 
@@ -155,6 +158,43 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    // MARK: - Dependency Management
+    
+    /// Check if all dependencies are installed; show setup window if not
+    private func checkDependencies() {
+        logInfo("App", "Checking dependencies...")
+        DependencyManager.shared.allInstalled { [weak self] allGood in
+            if allGood {
+                logInfo("App", "All dependencies are installed ✅")
+                // Refresh whisper path in case it changed
+                WhisperManager.shared.refreshWhisperPath()
+            } else {
+                logInfo("App", "Some dependencies are missing — showing setup window")
+                self?.showDependencySetup()
+            }
+        }
+    }
+    
+    /// Show the dependency setup window
+    func showDependencySetup() {
+        SetupWindowController.shared.showSetupWindow { [weak self] in
+            logInfo("App", "Dependency setup complete — rechecking permissions")
+            // Refresh whisper path and re-check CLI tools
+            WhisperManager.shared.refreshWhisperPath()
+            WhisperManager.shared.checkAvailability { available in
+                DispatchQueue.main.async {
+                    self?.appState.hasWhisperCLI = available
+                    
+                    let ffmpegExists = ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/usr/bin/ffmpeg"]
+                        .contains { FileManager.default.fileExists(atPath: $0) }
+                    self?.appState.hasFfmpeg = ffmpegExists
+                    
+                    self?.appState.updatePermissionState()
+                }
+            }
+        }
+    }
+    
     /// Show a clear alert for Accessibility permission with button to open Settings
     private func showAccessibilityAlert() {
         DispatchQueue.main.async {

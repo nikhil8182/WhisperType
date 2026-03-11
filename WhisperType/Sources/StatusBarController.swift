@@ -183,6 +183,11 @@ class StatusBarController {
         
         menu.addItem(NSMenuItem.separator())
         
+        // Check Dependencies
+        let depsItem = NSMenuItem(title: "Check Dependencies…", action: #selector(checkDependencies), keyEquivalent: "d")
+        depsItem.target = self
+        menu.addItem(depsItem)
+        
         // Refresh permissions
         let refreshItem = NSMenuItem(title: "Refresh Permissions", action: #selector(refreshPermissions), keyEquivalent: "r")
         refreshItem.target = self
@@ -244,6 +249,13 @@ class StatusBarController {
     
     @objc private func openAccessibilitySettings() {
         TextPaster.openAccessibilitySettings()
+    }
+    
+    @objc private func checkDependencies() {
+        // Access the AppDelegate to trigger setup window
+        if let appDelegate = NSApp.delegate as? AppDelegate {
+            appDelegate.showDependencySetup()
+        }
     }
     
     @objc private func refreshPermissions() {

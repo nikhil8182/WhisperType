@@ -3,7 +3,7 @@ import Foundation
 class WhisperManager {
     static let shared = WhisperManager()
     
-    private let whisperPath: String
+    private var whisperPath: String
     private let processQueue = DispatchQueue(label: "com.whispertype.whisper", qos: .userInitiated)
     private var currentProcess: Process?
     private var timeoutWorkItem: DispatchWorkItem?
@@ -12,25 +12,21 @@ class WhisperManager {
     private static let whisperTimeout: TimeInterval = 60.0
     
     private init() {
-        let possiblePaths = [
-            "/Users/onwords/.local/bin/whisper",
-            "/opt/homebrew/bin/whisper",
-            "/usr/local/bin/whisper"
-        ]
-        
-        self.whisperPath = possiblePaths.first { FileManager.default.fileExists(atPath: $0) } ?? "whisper"
+        self.whisperPath = DependencyManager.shared.findWhisperBinary() ?? "whisper"
         logInfo("WhisperManager", "Initialized. Whisper path: \(whisperPath)")
     }
     
-    private func makeEnv() -> [String: String] {
-        var env = ProcessInfo.processInfo.environment
-        let extraPaths = "/Users/onwords/.local/bin:/opt/homebrew/bin:/usr/local/bin"
-        if let existing = env["PATH"] {
-            env["PATH"] = "\(extraPaths):\(existing)"
-        } else {
-            env["PATH"] = extraPaths
+    /// Re-resolve the whisper binary path (e.g., after dependency install)
+    func refreshWhisperPath() {
+        let newPath = DependencyManager.shared.findWhisperBinary() ?? "whisper"
+        if newPath != whisperPath {
+            logInfo("WhisperManager", "Whisper path updated: \(whisperPath) → \(newPath)")
+            whisperPath = newPath
         }
-        return env
+    }
+    
+    private func makeEnv() -> [String: String] {
+        return DependencyManager.makeFullEnv()
     }
     
     func checkAvailability(completion: @escaping (Bool) -> Void) {

@@ -39,18 +39,22 @@ WhisperType is a lightweight menu bar app that transcribes your voice and pastes
 1. Download the DMG from the link above
 2. Open the DMG — drag **WhisperType** to the **Applications** folder
 3. Launch WhisperType — grant Microphone and Accessibility permissions when prompted
+4. **Dependencies are installed automatically on first launch** — a setup window will guide you through it
 
 > All releases: [github.com/nikhil8182/WhisperType/releases](https://github.com/nikhil8182/WhisperType/releases)
 
-### Install Dependencies
+### What Gets Installed
 
-```bash
-# Install Whisper CLI
-pipx install openai-whisper
+On first launch, WhisperType will check for and offer to install:
+- **Homebrew** — macOS package manager (opens Terminal for interactive install)
+- **Python 3** — runtime for Whisper
+- **ffmpeg** — audio processing
+- **pipx** — isolated Python app installer
+- **openai-whisper** — the speech recognition engine
 
-# Install ffmpeg
-brew install ffmpeg
-```
+You can also trigger this anytime from the menu bar: **Check Dependencies…**
+
+> **Note:** The first transcription after install will download the Whisper model (~150MB for 'base'). This is a one-time download.
 
 ### Build from Source
 
@@ -62,6 +66,8 @@ cd WhisperType
 # Build and install
 ./build-app.sh --install
 ```
+
+> When building from source, dependencies are still installed at runtime on first launch — no manual setup needed.
 
 ## Usage
 
@@ -108,10 +114,9 @@ The app will guide you through setup on first launch.
 ## Troubleshooting
 
 **"Whisper CLI not found"**
+Click the menu bar icon → **Check Dependencies…** to auto-install, or manually:
 ```bash
 pipx install openai-whisper
-# or
-pip install openai-whisper
 ```
 
 **"Accessibility not granted"**
@@ -143,6 +148,8 @@ WhisperType/
     └── Sources/
         ├── WhisperTypeApp.swift       # App entry point & delegate
         ├── AppState.swift             # Shared state & settings
+        ├── DependencyManager.swift    # Auto dependency checking & installation
+        ├── SetupWindowController.swift # First-run setup window UI
         ├── StatusBarController.swift  # Menu bar UI
         ├── HotkeyManager.swift        # Right Option key handling
         ├── AudioRecorder.swift        # AVAudioEngine recording
