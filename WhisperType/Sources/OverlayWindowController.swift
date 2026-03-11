@@ -1,36 +1,72 @@
 import Cocoa
-import SwiftUI
 
+/// Floating overlay using pure AppKit — no SwiftUI NSHostingView.
+/// Avoids EXC_BREAKPOINT constraint crashes on macOS 26.
 class OverlayWindowController {
     private var window: NSWindow?
-    private var hostingView: NSHostingView<OverlayView>?
+    private var containerView: NSView?
+    private var textField: NSTextField?
+    private var indicator: NSView?
+    private var pulseTimer: Timer?
 
     func show(text: String) {
         if window == nil {
             createWindow()
         }
-
-        hostingView?.rootView = OverlayView(text: text)
+        updateContent(text: text)
         window?.orderFront(nil)
     }
 
     func hide() {
+        pulseTimer?.invalidate()
+        pulseTimer = nil
         window?.orderOut(nil)
     }
 
-    private func createWindow() {
-        let contentView = OverlayView(text: "")
-        let hosting = NSHostingView(rootView: contentView)
-        hostingView = hosting
+    private func updateContent(text: String) {
+        textField?.stringValue = text
+        
+        // Show red dot for recording, spinner-like for transcribing
+        if text.contains("Recording") {
+            indicator?.isHidden = false
+            indicator?.layer?.backgroundColor = NSColor.red.cgColor
+            startPulse()
+        } else if text.contains("Transcribing") {
+            indicator?.isHidden = false
+            indicator?.layer?.backgroundColor = NSColor.orange.cgColor
+            stopPulse()
+        } else {
+            indicator?.isHidden = true
+            stopPulse()
+        }
+    }
 
+    private func startPulse() {
+        pulseTimer?.invalidate()
+        var bright = true
+        pulseTimer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { [weak self] _ in
+            guard let indicator = self?.indicator else { return }
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.5
+                indicator.animator().alphaValue = bright ? 0.3 : 1.0
+            }
+            bright.toggle()
+        }
+    }
+
+    private func stopPulse() {
+        pulseTimer?.invalidate()
+        pulseTimer = nil
+        indicator?.alphaValue = 1.0
+    }
+
+    private func createWindow() {
         let w = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 220, height: 50),
+            contentRect: NSRect(x: 0, y: 0, width: 220, height: 44),
             styleMask: [.borderless],
             backing: .buffered,
             defer: false
         )
-
-        w.contentView = hosting
         w.isOpaque = false
         w.backgroundColor = .clear
         w.level = .floating
@@ -39,7 +75,39 @@ class OverlayWindowController {
         w.hasShadow = true
         w.ignoresMouseEvents = true
 
-        // Position at top center of main screen
+        // Container with rounded background
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 220, height: 44))
+        container.wantsLayer = true
+        container.layer?.cornerRadius = 12
+        container.layer?.backgroundColor = NSColor(white: 0.15, alpha: 0.85).cgColor
+        container.layer?.borderColor = NSColor(white: 1.0, alpha: 0.15).cgColor
+        container.layer?.borderWidth = 0.5
+
+        // Red/orange dot indicator
+        let dot = NSView(frame: NSRect(x: 16, y: 17, width: 10, height: 10))
+        dot.wantsLayer = true
+        dot.layer?.cornerRadius = 5
+        dot.layer?.backgroundColor = NSColor.red.cgColor
+        dot.isHidden = true
+        container.addSubview(dot)
+        self.indicator = dot
+
+        // Text label
+        let label = NSTextField(frame: NSRect(x: 34, y: 10, width: 170, height: 24))
+        label.isEditable = false
+        label.isBordered = false
+        label.drawsBackground = false
+        label.textColor = .white
+        label.font = NSFont.systemFont(ofSize: 13, weight: .medium)
+        label.alignment = .left
+        label.stringValue = ""
+        container.addSubview(label)
+        self.textField = label
+
+        w.contentView = container
+        self.containerView = container
+
+        // Position at top center
         if let screen = NSScreen.main {
             let screenFrame = screen.visibleFrame
             let x = screenFrame.midX - 110
@@ -47,57 +115,6 @@ class OverlayWindowController {
             w.setFrameOrigin(NSPoint(x: x, y: y))
         }
 
-        window = w
-    }
-}
-
-struct OverlayView: View {
-    let text: String
-
-    var body: some View {
-        HStack(spacing: 8) {
-            if text.contains("Recording") {
-                Circle()
-                    .fill(Color.red)
-                    .frame(width: 10, height: 10)
-                    .modifier(PulseAnimation())
-            } else if !text.isEmpty {
-                ProgressView()
-                    .scaleEffect(0.7)
-                    .progressViewStyle(CircularProgressViewStyle(tint: .orange))
-            }
-
-            if !text.isEmpty {
-                Text(text)
-                    .font(.system(size: 13, weight: .medium, design: .rounded))
-                    .foregroundColor(.white)
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(.ultraThinMaterial)
-                .environment(\.colorScheme, .dark)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(Color.white.opacity(0.15), lineWidth: 0.5)
-        )
-        .shadow(color: .black.opacity(0.3), radius: 10, y: 4)
-    }
-}
-
-struct PulseAnimation: ViewModifier {
-    @State private var isAnimating = false
-
-    func body(content: Content) -> some View {
-        content
-            .opacity(isAnimating ? 0.3 : 1.0)
-            .onAppear {
-                withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) {
-                    isAnimating = true
-                }
-            }
+        self.window = w
     }
 }

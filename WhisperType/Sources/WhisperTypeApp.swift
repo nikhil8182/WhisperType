@@ -33,36 +33,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         checkPermissions()
 
-        // Check if onboarding is needed
-        let hasCompletedOnboarding = UserDefaults.standard.bool(forKey: "hasCompletedOnboarding")
-        
-        if !hasCompletedOnboarding {
-            // First launch — show onboarding (handles deps + permissions)
-            logInfo("App", "First launch — showing onboarding")
-            // Temporarily show dock icon during onboarding so window is visible
-            NSApp.setActivationPolicy(.regular)
-            OnboardingWindowController.shared.show()
-            
-            // Hide dock icon once onboarding window closes
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                NotificationCenter.default.addObserver(
-                    forName: NSWindow.willCloseNotification,
-                    object: nil,
-                    queue: .main
-                ) { [weak self] _ in
-                    // Small delay to let the animation finish
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-                        NSApp.setActivationPolicy(.accessory)
-                        // Re-check everything after onboarding
-                        self?.recheckPermissions()
-                        WhisperManager.shared.refreshWhisperPath()
-                    }
-                }
-            }
-        } else {
-            // Normal launch — check dependencies quietly
-            checkDependencies()
-        }
+        // Onboarding disabled — SwiftUI NSHostingView causes constraint crashes on macOS 26
+        // TODO: Re-implement onboarding with AppKit (no SwiftUI) to avoid
+        // EXC_BREAKPOINT in _postWindowNeedsUpdateConstraints
+        checkDependencies()
 
         HotkeyManager.shared.setup(appState: appState)
 
