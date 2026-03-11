@@ -47,6 +47,10 @@ class OnboardingWindowController {
         win.isMovableByWindowBackground = true
         win.hasShadow = true
         
+        // CRITICAL: Lock window size to prevent NSHostingView constraint crashes
+        win.minSize = NSSize(width: 520, height: 620)
+        win.maxSize = NSSize(width: 520, height: 620)
+        
         self.window = win
         win.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
