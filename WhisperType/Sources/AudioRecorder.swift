@@ -17,6 +17,9 @@ class AudioRecorder: NSObject {
     private var isCurrentlyRecording = false
     private let lock = NSLock()
 
+    /// Smoothed mic level 0...1 for the overlay waveform (written from the audio thread)
+    private(set) var level: Float = 0
+
     private override init() {
         super.init()
         logInfo("AudioRecorder", "Initialized (persistent AVAudioEngine)")
@@ -93,6 +96,16 @@ class AudioRecorder: NSObject {
 
                 guard recording, let file = file else { return }
 
+                // Level meter (RMS → 0...1, fast attack / slow release)
+                if let ch = buffer.floatChannelData?[0], buffer.frameLength > 0 {
+                    var sum: Float = 0
+                    let n = Int(buffer.frameLength)
+                    for i in 0..<n { sum += ch[i] * ch[i] }
+                    let rms = sqrtf(sum / Float(n))
+                    let target = min(1, rms * 9)
+                    self.level = target > self.level ? target : self.level * 0.85 + target * 0.15
+                }
+
                 do {
                     try file.write(from: buffer)
                 } catch {
@@ -154,6 +167,7 @@ class AudioRecorder: NSObject {
         }
 
         isCurrentlyRecording = false
+        level = 0
         let url = currentURL
         let pcm = pcm16k
         audioFile = nil

@@ -80,7 +80,7 @@ class HotkeyManager {
                 lastShortTap = nil
                 handsFree = true
                 logInfo("HotkeyManager", "Double-tap → hands-free mode")
-                showOverlay(text: "Hands-free · tap ⌥ to stop", kind: .handsFree)
+                showOverlay(text: lastPartialText, kind: .handsFree)
                 return
             }
             lastShortTap = now
@@ -120,7 +120,7 @@ class HotkeyManager {
 
         appState.setStatus(.recording)
         if appState.playSounds { SoundManager.shared.playStartSound() }
-        if appState.showFloatingOverlay { showOverlay(text: "Listening…", kind: .recording) }
+        if appState.showFloatingOverlay { showOverlay(text: "", kind: .recording) }
 
         AudioRecorder.shared.startRecording()
         logInfo("HotkeyManager", "Recording started (target: \(frontApp.name) \(frontApp.bundle))")
@@ -157,15 +157,21 @@ class HotkeyManager {
             guard let self = self else { return }
 
             let seconds = Double(pcm.count / 4) / 16000.0
-            if seconds < 0.4 && audioURL == nil {
-                logInfo("HotkeyManager", "Nothing captured, skipping")
+            let peak: Float = pcm.withUnsafeBytes { raw -> Float in
+                let f = raw.bindMemory(to: Float.self)
+                var m: Float = 0
+                for v in f where abs(v) > m { m = abs(v) }
+                return m
+            }
+            if (seconds < 0.4 && audioURL == nil) || peak < 0.015 {
+                logInfo("HotkeyManager", "Nothing heard (\(String(format: "%.1f", seconds))s, peak \(String(format: "%.3f", peak))), skipping")
                 self.resetState(); appState.setStatus(.idle); self.hideOverlay()
                 return
             }
 
             appState.setStatus(.transcribing)
             if appState.playSounds { SoundManager.shared.playStopSound() }
-            if appState.showFloatingOverlay { self.showOverlay(text: "Transcribing…", kind: .transcribing) }
+            if appState.showFloatingOverlay { self.showOverlay(text: self.lastPartialText, kind: .transcribing) }
 
             if appState.engineAvailable && pcm.count > 16000 {
                 EngineClient.shared.transcribe(pcm: pcm, language: appState.language, partial: false) { [weak self] result in
@@ -230,7 +236,7 @@ class HotkeyManager {
         }
 
         if appState.smartCleanup && appState.engineAvailable {
-            if appState.showFloatingOverlay { showOverlay(text: "Polishing…", kind: .polishing) }
+            if appState.showFloatingOverlay { showOverlay(text: trimmed, kind: .polishing) }
             EngineClient.shared.polish(text: trimmed, app: target, styleOverride: appState.styleOverride) { p in
                 DispatchQueue.main.async {
                     logInfo("HotkeyManager", "Polished [\(p.style)\(p.usedLLM ? "/llm" : "")] in \(p.ms)ms: \(p.text.prefix(80))")

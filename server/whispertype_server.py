@@ -189,7 +189,14 @@ class Speech:
             kwargs["compression_ratio_threshold"] = None
         with self.lock:
             r = self.mlx.transcribe(pcm, **kwargs)
-        return (r.get("text") or "").strip(), r.get("language")
+        # Drop hallucinated segments (silence / noise): whisper tags them with high no_speech_prob
+        segs = r.get("segments") or []
+        if segs:
+            kept = [s for s in segs if not (s.get("no_speech_prob", 0) > 0.6 and s.get("avg_logprob", 0) < -0.8)]
+            text = " ".join((s.get("text") or "").strip() for s in kept).strip()
+        else:
+            text = (r.get("text") or "").strip()
+        return text, r.get("language")
 
 
 def apply_replacements(text):
