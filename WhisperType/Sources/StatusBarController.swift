@@ -20,7 +20,7 @@ class StatusBarController {
     
     private func setupButton() {
         if let button = statusItem.button {
-            button.image = NSImage(systemSymbolName: "mic.fill", accessibilityDescription: "WhisperType")
+            button.image = NSImage(systemSymbolName: "mic.fill", accessibilityDescription: "Iniyal WhisperType")
             button.image?.isTemplate = true
         }
     }
@@ -54,7 +54,7 @@ class StatusBarController {
             .compactMap { $0 }
             .receive(on: DispatchQueue.main)
             .sink { [weak self] message in
-                self?.showNotification(title: "WhisperType Error", body: message)
+                self?.showNotification(title: "Iniyal WhisperType", body: message)
             }
             .store(in: &cancellables)
     }
@@ -64,15 +64,15 @@ class StatusBarController {
         
         switch status {
         case .idle:
-            button.image = NSImage(systemSymbolName: "mic.fill", accessibilityDescription: "WhisperType - Idle")
+            button.image = NSImage(systemSymbolName: "mic.fill", accessibilityDescription: "Iniyal WhisperType - Idle")
             button.image?.isTemplate = true
             button.contentTintColor = nil
         case .recording:
-            button.image = NSImage(systemSymbolName: "mic.circle.fill", accessibilityDescription: "WhisperType - Recording")
+            button.image = NSImage(systemSymbolName: "mic.circle.fill", accessibilityDescription: "Iniyal WhisperType - Recording")
             button.image?.isTemplate = false
             button.contentTintColor = .systemRed
         case .transcribing:
-            button.image = NSImage(systemSymbolName: "ellipsis.circle.fill", accessibilityDescription: "WhisperType - Transcribing")
+            button.image = NSImage(systemSymbolName: "ellipsis.circle.fill", accessibilityDescription: "Iniyal WhisperType - Transcribing")
             button.image?.isTemplate = false
             button.contentTintColor = .systemOrange
         }
@@ -249,14 +249,14 @@ class StatusBarController {
         menu.addItem(settingsItem)
         
         // About
-        let aboutItem = NSMenuItem(title: "About WhisperType", action: #selector(showAbout), keyEquivalent: "")
+        let aboutItem = NSMenuItem(title: "About Iniyal WhisperType", action: #selector(showAbout), keyEquivalent: "")
         aboutItem.target = self
         menu.addItem(aboutItem)
         
         menu.addItem(NSMenuItem.separator())
         
         // Quit
-        let quitItem = NSMenuItem(title: "Quit WhisperType", action: #selector(quit), keyEquivalent: "q")
+        let quitItem = NSMenuItem(title: "Quit Iniyal WhisperType", action: #selector(quit), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
         
@@ -299,7 +299,7 @@ class StatusBarController {
     private func openConfig(_ name: String) {
         let url = EngineClient.configDir.appendingPathComponent(name)
         if !FileManager.default.fileExists(atPath: url.path) {
-            showNotification(title: "WhisperType", body: "\(name) appears after the engine's first start.")
+            showNotification(title: "Iniyal WhisperType", body: "\(name) appears after the engine's first start.")
             return
         }
         NSWorkspace.shared.open(url)
@@ -343,7 +343,7 @@ class StatusBarController {
     
     @objc private func refreshPermissions() {
         appState.refreshPermissions()
-        showNotification(title: "WhisperType", body: "Permissions refreshed: \(appState.permissionState.rawValue)")
+        showNotification(title: "Iniyal WhisperType", body: "Permissions refreshed: \(appState.permissionState.rawValue)")
     }
     
     @objc private func openSettings() {
@@ -353,7 +353,7 @@ class StatusBarController {
     
     @objc private func showAbout() {
         let credits = NSAttributedString(
-            string: "by Onwords Smart Solutions\nonwords.in",
+            string: "Iniyal, the Onwords AI, types what you say.\nby Onwords Smart Solutions · onwords.in",
             attributes: [
                 .font: NSFont.systemFont(ofSize: 11),
                 .foregroundColor: NSColor.secondaryLabelColor
@@ -361,7 +361,7 @@ class StatusBarController {
         )
         
         let options: [NSApplication.AboutPanelOptionKey: Any] = [
-            .applicationName: "WhisperType",
+            .applicationName: "Iniyal WhisperType",
             .applicationVersion: "1.2.0",
             .version: "3",
             .credits: credits,

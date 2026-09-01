@@ -17,7 +17,7 @@ final class Logger {
 
     private init() {
         let logsDir = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Logs/WhisperType")
+            .appendingPathComponent("Library/Logs/IniyalWhisperType")
         try? FileManager.default.createDirectory(at: logsDir, withIntermediateDirectories: true)
 
         logFileURL = logsDir.appendingPathComponent("whispertype.log")
@@ -39,7 +39,7 @@ final class Logger {
         fileHandle = FileHandle(forWritingAtPath: logFileURL.path)
         fileHandle?.seekToEndOfFile()
 
-        log(.info, "Logger", "=== WhisperType started ===")
+        log(.info, "Logger", "=== Iniyal WhisperType started ===")
         log(.info, "Logger", "Log file: \(logFileURL.path)")
     }
 

@@ -1,9 +1,9 @@
 #!/bin/bash
-# Installs the WhisperType engine (mlx-whisper + large-v3-turbo) into
-#   ~/Library/Application Support/WhisperType/engine
+# Installs the Iniyal WhisperType engine (mlx-whisper + large-v3-turbo) into
+#   ~/Library/Application Support/IniyalWhisperType/engine
 # Idempotent. Needs python3.11+ (Homebrew python or python.org build).
 set -e
-ENGINE_DIR="$HOME/Library/Application Support/WhisperType/engine"
+ENGINE_DIR="$HOME/Library/Application Support/IniyalWhisperType/engine"
 SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
 mkdir -p "$ENGINE_DIR"
 

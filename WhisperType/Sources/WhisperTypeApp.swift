@@ -1,5 +1,6 @@
 import SwiftUI
 import AVFoundation
+import ServiceManagement
 
 @main
 struct WhisperTypeApp: App {
@@ -24,7 +25,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
 
 
-        logInfo("App", "WhisperType launching...")
+        logInfo("App", "Iniyal WhisperType launching...")
 
         // Hide dock icon — menu bar only
         NSApp.setActivationPolicy(.accessory)
@@ -41,6 +42,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         HotkeyManager.shared.setup(appState: appState)
 
+        // Keep the login item pointed at THIS bundle id (rebrand-safe)
+        if appState.launchAtLogin { try? SMAppService.mainApp.register() }
+
         // Local engine: launch if installed, keep an eye on it
         EngineClient.shared.ensureRunning()
         engineTimer = Timer(timeInterval: 10.0, repeats: true) { _ in
@@ -54,7 +58,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         RunLoop.main.add(permissionCheckTimer!, forMode: .common)
 
-        logInfo("App", "WhisperType launch complete")
+        logInfo("App", "Iniyal WhisperType launch complete")
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -81,7 +85,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         for sig: Int32 in [SIGABRT, SIGSEGV, SIGBUS] {
             signal(sig) { signalNumber in
                 let msg = "FATAL: signal \(signalNumber)\n"
-                let logPath = NSHomeDirectory() + "/Library/Logs/WhisperType/crash.log"
+                let logPath = NSHomeDirectory() + "/Library/Logs/IniyalWhisperType/crash.log"
                 if let fd = fopen(logPath, "a") {
                     fputs(msg, fd)
                     fclose(fd)
@@ -128,8 +132,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         // Accessibility alert is now handled by onboarding (step 3)
         // Only show the old alert if onboarding was already completed
-        if !axTrusted && UserDefaults.standard.bool(forKey: "hasCompletedOnboarding") {
-            showAccessibilityAlert()
+        if !axTrusted {
+            showAccessibilityAlert()   // onboarding is disabled, so always nudge (non-blocking)
         }
 
         // --- Whisper CLI ---
@@ -227,7 +231,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.async {
             TextPaster.requestAccessibility()
             TextPaster.openAccessibilitySettings()
-            self.appState.showError("Accessibility needed to paste: toggle WhisperType ON in System Settings → Privacy & Security → Accessibility.")
+            self.appState.showError("Accessibility needed to paste: toggle Iniyal WhisperType ON in System Settings → Privacy & Security → Accessibility.")
         }
     }
 }

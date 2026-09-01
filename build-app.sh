@@ -3,13 +3,14 @@ set -e
 
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BUILD_DIR="$PROJECT_DIR/build"
-APP_NAME="WhisperType"
+APP_NAME="Iniyal WhisperType"
+EXEC_NAME="WhisperType"
 APP_BUNDLE="$BUILD_DIR/$APP_NAME.app"
 ENTITLEMENTS="$PROJECT_DIR/WhisperType/WhisperType.entitlements"
 INSTALL_DIR="/Applications/$APP_NAME.app"
 
 echo "╔══════════════════════════════════════╗"
-echo "║    WhisperType Build v1.2.0          ║"
+echo "║    Iniyal WhisperType Build v1.2.0   ║"
 echo "║    by Onwords Smart Solutions        ║"
 echo "╚══════════════════════════════════════╝"
 echo ""
@@ -21,8 +22,13 @@ swift build -c release 2>&1
 
 # --- Step 2: Generate icons ---
 echo ""
-echo "🎨 Generating app icon..."
-python3 "$PROJECT_DIR/scripts/generate_icon.py"
+echo "🎨 App icon..."
+if [ -f "$PROJECT_DIR/WhisperType/Resources/AppIcon.icns" ]; then
+    mkdir -p "$BUILD_DIR"; cp "$PROJECT_DIR/WhisperType/Resources/AppIcon.icns" "$BUILD_DIR/AppIcon.icns"
+    echo "  ✅ Using Iniyal brand icon (WhisperType/Resources/AppIcon.icns)"
+else
+    python3 "$PROJECT_DIR/scripts/generate_icon.py"
+fi
 
 echo "🎨 Generating menu bar icons..."
 python3 "$PROJECT_DIR/scripts/generate_menubar_icon.py"
@@ -36,7 +42,7 @@ mkdir -p "$APP_BUNDLE/Contents/MacOS"
 mkdir -p "$APP_BUNDLE/Contents/Resources"
 
 # Copy executable
-cp ".build/release/WhisperType" "$APP_BUNDLE/Contents/MacOS/WhisperType"
+cp ".build/release/$EXEC_NAME" "$APP_BUNDLE/Contents/MacOS/$EXEC_NAME"
 
 # Copy Info.plist
 cp "WhisperType/Info.plist" "$APP_BUNDLE/Contents/Info.plist"
@@ -56,7 +62,7 @@ if [ -d "$PROJECT_DIR/WhisperType/Resources" ]; then
     echo "  ✅ Menu bar icons included"
 fi
 
-# Bundle the local engine sources (venv lives in ~/Library/Application Support/WhisperType/engine)
+# Bundle the local engine sources (venv lives in ~/Library/Application Support/IniyalWhisperType/engine)
 cp "$PROJECT_DIR/server/whispertype_server.py" "$APP_BUNDLE/Contents/Resources/"
 cp "$PROJECT_DIR/server/install_engine.sh" "$APP_BUNDLE/Contents/Resources/"
 echo "  ✅ Engine sources bundled"
@@ -86,7 +92,7 @@ codesign -dvv "$APP_BUNDLE" 2>&1 | grep -E "Identifier|Authority|TeamIdentifier"
 # --- Step 5: Report ---
 echo ""
 APP_SIZE=$(du -sh "$APP_BUNDLE" | awk '{print $1}')
-BINARY_SIZE=$(du -sh "$APP_BUNDLE/Contents/MacOS/WhisperType" | awk '{print $1}')
+BINARY_SIZE=$(du -sh "$APP_BUNDLE/Contents/MacOS/$EXEC_NAME" | awk '{print $1}')
 echo "═══════════════════════════════════════"
 echo "  ✅ Build complete!"
 echo "  📍 $APP_BUNDLE"
@@ -101,6 +107,7 @@ if [ "$1" = "--install" ] || [ "$1" = "-i" ]; then
     echo "📲 Installing to /Applications..."
     
     killall WhisperType 2>/dev/null || true
+    rm -rf "/Applications/WhisperType.app"   # retire the pre-rebrand bundle
     sleep 1
     
     rm -rf "$INSTALL_DIR"
@@ -108,14 +115,14 @@ if [ "$1" = "--install" ] || [ "$1" = "-i" ]; then
     
     echo "✅ Installed to $INSTALL_DIR"
 
-    if [ ! -x "$HOME/Library/Application Support/WhisperType/engine/.venv/bin/python" ]; then
+    if [ ! -x "$HOME/Library/Application Support/IniyalWhisperType/engine/.venv/bin/python" ]; then
         echo "🧠 Installing local engine (one-time)..."
         bash "$PROJECT_DIR/server/install_engine.sh" || echo "⚠️  Engine install failed; app will fall back to whisper CLI"
     else
-        cp "$PROJECT_DIR/server/whispertype_server.py" "$HOME/Library/Application Support/WhisperType/engine/whispertype_server.py"
+        cp "$PROJECT_DIR/server/whispertype_server.py" "$HOME/Library/Application Support/IniyalWhisperType/engine/whispertype_server.py"
     fi
     echo ""
-    echo "🚀 Launching WhisperType..."
+    echo "🚀 Launching Iniyal WhisperType..."
     open "$INSTALL_DIR"
 else
     echo ""
@@ -128,3 +135,5 @@ echo "⚠️  First run setup:"
 echo "  1. Grant Microphone access when prompted"
 echo "  2. Grant Accessibility in System Settings → Privacy & Security"
 echo "  3. Hold Right Option to record, release to transcribe & paste"
+    # login item for the new bundle id (old "WhisperType" entry is removed)
+    osascript -e 'tell application "System Events" to delete login item "WhisperType"' >/dev/null 2>&1 || true

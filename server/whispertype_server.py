@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""WhisperType local engine.
+"""Iniyal WhisperType local engine.
 
 One warm process on 127.0.0.1:4877 that the menu-bar app talks to:
   GET  /health                     -> {"ok":true, "model":..., "llm":bool}
@@ -10,7 +10,7 @@ One warm process on 127.0.0.1:4877 that the menu-bar app talks to:
 
 Speech: mlx-whisper large-v3-turbo on Apple Silicon (model loaded once).
 Cleanup: local Ollama model (never leaves the Mac). Falls back to raw text if Ollama is down.
-Config lives in ~/Library/Application Support/WhisperType/{vocabulary,apps,config}.json
+Config lives in ~/Library/Application Support/IniyalWhisperType/{vocabulary,apps,config}.json
 """
 import json
 import os
@@ -25,8 +25,8 @@ import numpy as np
 
 HOST, PORT = "127.0.0.1", 4877
 HOME = os.path.expanduser("~")
-APP_SUPPORT = os.path.join(HOME, "Library/Application Support/WhisperType")
-LOG_DIR = os.path.join(HOME, "Library/Logs/WhisperType")
+APP_SUPPORT = os.path.join(HOME, "Library/Application Support/IniyalWhisperType")
+LOG_DIR = os.path.join(HOME, "Library/Logs/IniyalWhisperType")
 os.makedirs(APP_SUPPORT, exist_ok=True)
 os.makedirs(LOG_DIR, exist_ok=True)
 LOG_PATH = os.path.join(LOG_DIR, "server.log")

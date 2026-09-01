@@ -53,7 +53,7 @@ class AppState: ObservableObject {
     @AppStorage("whisperModel") var whisperModel: String = "base"
     @AppStorage("showFloatingOverlay") var showFloatingOverlay: Bool = true
     @AppStorage("playSounds") var playSounds: Bool = true
-    @AppStorage("launchAtLogin") var launchAtLogin: Bool = false
+    @AppStorage("launchAtLogin") var launchAtLogin: Bool = true
     @AppStorage("hotkeyKeyCode") var hotkeyKeyCode: Int = 61
     @AppStorage("language") var language: String = "en"
     @AppStorage("maxHistoryCount") var maxHistoryCount: Int = 50
@@ -139,7 +139,7 @@ class AppState: ObservableObject {
     
     private var historyURL: URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let dir = appSupport.appendingPathComponent("WhisperType")
+        let dir = appSupport.appendingPathComponent("IniyalWhisperType")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("history.json")
     }

@@ -20,7 +20,7 @@ final class EngineClient {
 
     static var engineDir: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("WhisperType/engine")
+            .appendingPathComponent("IniyalWhisperType/engine")
     }
     static var configDir: URL { engineDir.deletingLastPathComponent() }
     static var isInstalled: Bool {
@@ -99,7 +99,7 @@ final class EngineClient {
         p.arguments = [script]
         p.environment = DependencyManager.makeFullEnv()
         let logURL = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Logs/WhisperType/server.stderr.log")
+            .appendingPathComponent("Library/Logs/IniyalWhisperType/server.stderr.log")
         FileManager.default.createFile(atPath: logURL.path, contents: nil)
         if let fh = try? FileHandle(forWritingTo: logURL) { fh.seekToEndOfFile(); p.standardError = fh; p.standardOutput = fh }
         p.terminationHandler = { proc in

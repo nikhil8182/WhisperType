@@ -7,13 +7,13 @@
     <key>CFBundleExecutable</key>
     <string>WhisperType</string>
     <key>CFBundleIdentifier</key>
-    <string>com.onwords.WhisperType</string>
+    <string>com.onwords.IniyalWhisperType</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>WhisperType</string>
+    <string>Iniyal WhisperType</string>
     <key>CFBundleDisplayName</key>
-    <string>WhisperType</string>
+    <string>Iniyal WhisperType</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
@@ -31,9 +31,9 @@
     <key>NSHumanReadableCopyright</key>
     <string>© 2026 Onwords Smart Solutions. All rights reserved.</string>
     <key>NSMicrophoneUsageDescription</key>
-    <string>WhisperType needs microphone access to record your voice for transcription.</string>
+    <string>Iniyal WhisperType needs microphone access to record your voice for transcription.</string>
     <key>NSAppleEventsUsageDescription</key>
-    <string>WhisperType needs to send keystrokes to paste transcribed text into the active application.</string>
+    <string>Iniyal WhisperType needs to send keystrokes to paste transcribed text into the active application.</string>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
 </dict>

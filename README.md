@@ -1,12 +1,12 @@
-# WhisperType
+# Iniyal WhisperType
 
 [![GitHub release](https://img.shields.io/github/v/release/nikhil8182/WhisperType?label=Download&color=blue)](https://github.com/nikhil8182/WhisperType/releases/latest)
 [![Platform](https://img.shields.io/badge/platform-macOS%2013%2B-lightgrey?logo=apple)](https://www.apple.com/macos/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-**Voice-to-text for macOS — just hold a key and speak.**
+**Iniyal, the Onwords AI, types what you say. Hold a key, talk, release.**
 
-WhisperType is a lightweight menu bar app that transcribes your voice and pastes the text into any active application. Hold the Right Option key to record, release to transcribe and paste. Powered by OpenAI's Whisper, running entirely on your Mac — no cloud, no API keys, no subscriptions.
+Iniyal WhisperType is a lightweight menu bar app that transcribes your voice and pastes the text into any active application. Hold the Right Option key to record, release to transcribe and paste. Powered by OpenAI's Whisper, running entirely on your Mac — no cloud, no API keys, no subscriptions.
 
 <!-- ![WhisperType Screenshot](screenshot.png) -->
 
@@ -43,9 +43,9 @@ WhisperType is a lightweight menu bar app that transcribes your voice and pastes
 **[⬇️ Download WhisperType-1.1.0.dmg](https://github.com/nikhil8182/WhisperType/releases/latest)**
 
 1. Download the DMG from the link above
-2. Open the DMG — drag **WhisperType** to the **Applications** folder
-3. Launch WhisperType — grant Microphone and Accessibility permissions when prompted
-4. Install the engine once: `bash /Applications/WhisperType.app/Contents/Resources/install_engine.sh` (downloads ~1.6 GB model + pulls the Ollama cleanup model). `./build-app.sh --install` does this for you when building from source.
+2. Open the DMG — drag **Iniyal WhisperType** to the **Applications** folder
+3. Launch Iniyal WhisperType — grant Microphone and Accessibility permissions when prompted
+4. Install the engine once: `bash "/Applications/Iniyal WhisperType.app/Contents/Resources/install_engine.sh"` (downloads ~1.6 GB model + pulls the Ollama cleanup model). `./build-app.sh --install` does this for you when building from source.
 
 > All releases: [github.com/nikhil8182/WhisperType/releases](https://github.com/nikhil8182/WhisperType/releases)
 
@@ -77,10 +77,10 @@ cd WhisperType
 
 ## Usage
 
-1. **Launch** WhisperType — it appears as a microphone icon in your menu bar
+1. **Launch** Iniyal WhisperType — it appears as a microphone icon in your menu bar
 2. **Hold Right Option (⌥)** to record, watch the live preview, **release** to paste. Or **double-tap** for hands-free and tap once to stop.
 3. Say "new line", "new paragraph" or "scratch that" while dictating.
-4. Config lives in `~/Library/Application Support/WhisperType/`: `vocabulary.json`, `apps.json`, `config.json` (engine + LLM model). Logs: `~/Library/Logs/WhisperType/`.
+4. Config lives in `~/Library/Application Support/IniyalWhisperType/`: `vocabulary.json`, `apps.json`, `config.json` (engine + LLM model). Logs: `~/Library/Logs/IniyalWhisperType/`.
 
 ### Menu Bar
 
@@ -134,7 +134,7 @@ pipx install openai-whisper
 **No transcription output**
 - Make sure your microphone is working (test in Voice Memos)
 - Try a longer recording (> 0.5 seconds)
-- Check `~/Library/Logs/WhisperType/whispertype.log` for errors
+- Check `~/Library/Logs/IniyalWhisperType/whispertype.log` for errors
 
 ## Project Structure
 
