@@ -9,7 +9,7 @@ ENTITLEMENTS="$PROJECT_DIR/WhisperType/WhisperType.entitlements"
 INSTALL_DIR="/Applications/$APP_NAME.app"
 
 echo "╔══════════════════════════════════════╗"
-echo "║    WhisperType Build v1.1.0          ║"
+echo "║    WhisperType Build v1.2.0          ║"
 echo "║    by Onwords Smart Solutions        ║"
 echo "╚══════════════════════════════════════╝"
 echo ""
@@ -56,13 +56,22 @@ if [ -d "$PROJECT_DIR/WhisperType/Resources" ]; then
     echo "  ✅ Menu bar icons included"
 fi
 
+# Bundle the local engine sources (venv lives in ~/Library/Application Support/WhisperType/engine)
+cp "$PROJECT_DIR/server/whispertype_server.py" "$APP_BUNDLE/Contents/Resources/"
+cp "$PROJECT_DIR/server/install_engine.sh" "$APP_BUNDLE/Contents/Resources/"
+echo "  ✅ Engine sources bundled"
+
 # Create PkgInfo
 echo -n "APPL????" > "$APP_BUNDLE/Contents/PkgInfo"
 
 # --- Step 4: Code signing ---
 echo ""
 echo "🔐 Code signing..."
-codesign --force --deep --sign - \
+# Prefer a real Apple Development identity: stable signature = TCC (Accessibility/Mic) grants survive rebuilds.
+SIGN_ID=$(security find-identity -v -p codesigning 2>/dev/null | grep -o '"Apple Development: [^"]*"' | head -1 | tr -d '"')
+[ -z "$SIGN_ID" ] && SIGN_ID="-"
+echo "  identity: $SIGN_ID"
+codesign --force --deep --sign "$SIGN_ID" \
     --entitlements "$ENTITLEMENTS" \
     --preserve-metadata=entitlements,identifier \
     "$APP_BUNDLE" 2>&1 || {
@@ -83,7 +92,7 @@ echo "  ✅ Build complete!"
 echo "  📍 $APP_BUNDLE"
 echo "  📏 App size: $APP_SIZE"
 echo "  📏 Binary: $BINARY_SIZE"
-echo "  📋 Version: 1.1.0 (build 2)"
+echo "  📋 Version: 1.2.0 (build 3)"
 echo "═══════════════════════════════════════"
 
 # --- Step 6: Install (optional) ---
@@ -98,6 +107,13 @@ if [ "$1" = "--install" ] || [ "$1" = "-i" ]; then
     cp -R "$APP_BUNDLE" "$INSTALL_DIR"
     
     echo "✅ Installed to $INSTALL_DIR"
+
+    if [ ! -x "$HOME/Library/Application Support/WhisperType/engine/.venv/bin/python" ]; then
+        echo "🧠 Installing local engine (one-time)..."
+        bash "$PROJECT_DIR/server/install_engine.sh" || echo "⚠️  Engine install failed; app will fall back to whisper CLI"
+    else
+        cp "$PROJECT_DIR/server/whispertype_server.py" "$HOME/Library/Application Support/WhisperType/engine/whispertype_server.py"
+    fi
     echo ""
     echo "🚀 Launching WhisperType..."
     open "$INSTALL_DIR"

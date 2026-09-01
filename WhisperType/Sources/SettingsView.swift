@@ -28,7 +28,7 @@ struct SettingsView: View {
                 }
                 .tag(2)
         }
-        .frame(width: 450, height: 320)
+        .frame(width: 520, height: 460)
         .padding()
     }
 }
@@ -42,11 +42,32 @@ struct GeneralSettingsView: View {
                 HStack {
                     Text("Hotkey")
                     Spacer()
-                    Text(hotkeyDisplayName)
+                    Text(hotkeyDisplayName + "  ·  hold = talk, double-tap = hands-free")
                         .foregroundColor(.secondary)
                     // Future: Add hotkey recording button
                 }
                 
+                Toggle("Smart cleanup (local LLM, never leaves this Mac)", isOn: $appState.smartCleanup)
+                Toggle("Live preview while recording", isOn: $appState.livePreview)
+                Picker("Cleanup style", selection: $appState.styleOverride) {
+                    Text("Auto (by front app)").tag("auto")
+                    Text("Casual chat").tag("casual")
+                    Text("Formal / email").tag("formal")
+                    Text("AI prompt").tag("prompt")
+                    Text("Literal").tag("literal")
+                    Text("Neutral cleanup").tag("neutral")
+                }
+                HStack {
+                    Text("Engine")
+                    Spacer()
+                    Text(appState.engineAvailable ? "large-v3-turbo (MLX)" + (appState.llmAvailable ? " + LLM" : "") : "starting / CLI fallback")
+                        .foregroundColor(.secondary)
+                }
+                HStack {
+                    Button("Edit vocabulary…") { NSWorkspace.shared.open(EngineClient.configDir.appendingPathComponent("vocabulary.json")) }
+                    Button("Edit app styles…") { NSWorkspace.shared.open(EngineClient.configDir.appendingPathComponent("apps.json")) }
+                }
+                .buttonStyle(.link)
                 Toggle("Show floating overlay", isOn: $appState.showFloatingOverlay)
                 Toggle("Sound effects", isOn: $appState.playSounds)
                 Toggle("Launch at login", isOn: $appState.launchAtLogin)

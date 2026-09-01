@@ -17,6 +17,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var statusBarController: StatusBarController!
     let appState = AppState.shared
     private var permissionCheckTimer: Timer?
+    private var engineTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         installCrashHandler()
@@ -40,18 +41,28 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         HotkeyManager.shared.setup(appState: appState)
 
-        // Periodically re-check permissions (user may grant them later)
-        permissionCheckTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+        // Local engine: launch if installed, keep an eye on it
+        EngineClient.shared.ensureRunning()
+        engineTimer = Timer(timeInterval: 10.0, repeats: true) { _ in
+            EngineClient.shared.ensureRunning()
+        }
+        RunLoop.main.add(engineTimer!, forMode: .common)
+
+        // Re-check mic + accessibility only (cheap, no process spawns)
+        permissionCheckTimer = Timer(timeInterval: 15.0, repeats: true) { [weak self] _ in
             self?.recheckPermissions()
         }
+        RunLoop.main.add(permissionCheckTimer!, forMode: .common)
 
         logInfo("App", "WhisperType launch complete")
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         permissionCheckTimer?.invalidate()
+        engineTimer?.invalidate()
         logInfo("App", "WhisperType shutting down")
         AudioRecorder.shared.forceReset()
+        EngineClient.shared.stop()
     }
 
     private func installCrashHandler() {
@@ -126,7 +137,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async {
                 self.appState.hasWhisperCLI = available
                 logInfo("App", "Whisper CLI available: \(available)")
-                if !available {
+                if !available && !EngineClient.isInstalled {
                     self.appState.showError("Whisper CLI not found. Install with: pipx install openai-whisper")
                 }
                 self.appState.updatePermissionState()
@@ -138,7 +149,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             .contains { FileManager.default.fileExists(atPath: $0) }
         appState.hasFfmpeg = ffmpegExists
         logInfo("App", "ffmpeg available: \(ffmpegExists)")
-        if !ffmpegExists {
+        if !ffmpegExists && !EngineClient.isInstalled {
             appState.showError("ffmpeg not found. Install with: brew install ffmpeg")
         }
 
@@ -166,23 +177,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 logInfo("App", "Permission state changed — ax=\(axTrusted) mic=\(micAuth) ffmpeg=\(ffmpegExists)")
             }
         }
-        
-        // Also recheck whisper (async)
-        WhisperManager.shared.checkAvailability { available in
-            DispatchQueue.main.async {
-                if self.appState.hasWhisperCLI != available {
-                    self.appState.hasWhisperCLI = available
-                    self.appState.updatePermissionState()
-                    logInfo("App", "Whisper availability changed: \(available)")
-                }
-            }
-        }
     }
 
     // MARK: - Dependency Management
     
     /// Check if all dependencies are installed; show setup window if not
     private func checkDependencies() {
+        if EngineClient.isInstalled {
+            logInfo("App", "Local engine installed — CLI dependency setup not required")
+            WhisperManager.shared.refreshWhisperPath()
+            return
+        }
         logInfo("App", "Checking dependencies...")
         DependencyManager.shared.allInstalled { [weak self] allGood in
             if allGood {
@@ -216,31 +221,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     
-    /// Show a clear alert for Accessibility permission with button to open Settings
+    /// Non-blocking Accessibility nudge: system prompt (adds us to the list) + open the pane.
+    /// Never runModal here: a modal loop freezes the engine/permission timers.
     private func showAccessibilityAlert() {
         DispatchQueue.main.async {
-            let alert = NSAlert()
-            alert.messageText = "Accessibility Permission Required"
-            alert.informativeText = """
-            WhisperType needs Accessibility access to paste transcribed text into your apps.
-            
-            Click "Open Settings" to grant access:
-            1. Click the + button
-            2. Navigate to WhisperType.app and add it
-            3. Toggle it ON
-            
-            You may need to restart WhisperType after granting access.
-            """
-            alert.alertStyle = .warning
-            alert.addButton(withTitle: "Open Settings")
-            alert.addButton(withTitle: "Later")
-            
-            NSApp.activate(ignoringOtherApps: true)
-            let response = alert.runModal()
-            
-            if response == .alertFirstButtonReturn {
-                TextPaster.openAccessibilitySettings()
-            }
+            TextPaster.requestAccessibility()
+            TextPaster.openAccessibilitySettings()
+            self.appState.showError("Accessibility needed to paste: toggle WhisperType ON in System Settings → Privacy & Security → Accessibility.")
         }
     }
 }

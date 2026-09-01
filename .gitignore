@@ -88,3 +88,4 @@ logs/
 # ===========================
 dist/*.dmg
 dist/*.zip
+server/.venv/

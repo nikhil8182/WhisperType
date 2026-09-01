@@ -45,6 +45,11 @@ class StatusBarController {
             }
             .store(in: &cancellables)
         
+        appState.$engineAvailable.combineLatest(appState.$llmAvailable)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.updateMenu() }
+            .store(in: &cancellables)
+
         appState.$errorMessage
             .compactMap { $0 }
             .receive(on: DispatchQueue.main)
@@ -169,6 +174,46 @@ class StatusBarController {
         modelMenuItem.submenu = modelMenu
         menu.addItem(modelMenuItem)
         
+        // Engine status + smart cleanup
+        let engineTitle = appState.engineAvailable
+            ? "Engine: turbo ✓" + (appState.llmAvailable ? "  ·  cleanup ✓" : "  ·  cleanup off (Ollama down)")
+            : (EngineClient.isInstalled ? "Engine: starting…" : "Engine: not installed (CLI fallback)")
+        let engineItem = NSMenuItem(title: engineTitle, action: nil, keyEquivalent: "")
+        engineItem.isEnabled = false
+        menu.addItem(engineItem)
+
+        let cleanupItem = NSMenuItem(title: "Smart Cleanup (local LLM)", action: #selector(toggleCleanup), keyEquivalent: "")
+        cleanupItem.target = self
+        cleanupItem.state = appState.smartCleanup ? .on : .off
+        menu.addItem(cleanupItem)
+
+        let previewItem = NSMenuItem(title: "Live Preview While Recording", action: #selector(togglePreview), keyEquivalent: "")
+        previewItem.target = self
+        previewItem.state = appState.livePreview ? .on : .off
+        menu.addItem(previewItem)
+
+        let styleMenu = NSMenu()
+        for (tag, title) in [("auto", "Auto (by app)"), ("casual", "Casual chat"), ("formal", "Formal / email"), ("prompt", "AI prompt"), ("literal", "Literal"), ("neutral", "Neutral cleanup")] {
+            let it = NSMenuItem(title: title, action: #selector(selectStyle(_:)), keyEquivalent: "")
+            it.target = self
+            it.representedObject = tag
+            if tag == appState.styleOverride { it.state = .on }
+            styleMenu.addItem(it)
+        }
+        let styleItem = NSMenuItem(title: "Cleanup Style", action: nil, keyEquivalent: "")
+        styleItem.submenu = styleMenu
+        menu.addItem(styleItem)
+
+        let vocabItem = NSMenuItem(title: "Edit Vocabulary…", action: #selector(editVocabulary), keyEquivalent: "")
+        vocabItem.target = self
+        menu.addItem(vocabItem)
+
+        let appsItem = NSMenuItem(title: "Edit App Styles…", action: #selector(editAppStyles), keyEquivalent: "")
+        appsItem.target = self
+        menu.addItem(appsItem)
+
+        menu.addItem(NSMenuItem.separator())
+
         // Overlay toggle
         let overlayItem = NSMenuItem(title: "Show Overlay", action: #selector(toggleOverlay), keyEquivalent: "")
         overlayItem.target = self
@@ -244,6 +289,22 @@ class StatusBarController {
         }
     }
     
+    @objc private func toggleCleanup() { appState.smartCleanup.toggle(); updateMenu() }
+    @objc private func togglePreview() { appState.livePreview.toggle(); updateMenu() }
+    @objc private func selectStyle(_ sender: NSMenuItem) {
+        if let s = sender.representedObject as? String { appState.styleOverride = s; updateMenu() }
+    }
+    @objc private func editVocabulary() { openConfig("vocabulary.json") }
+    @objc private func editAppStyles() { openConfig("apps.json") }
+    private func openConfig(_ name: String) {
+        let url = EngineClient.configDir.appendingPathComponent(name)
+        if !FileManager.default.fileExists(atPath: url.path) {
+            showNotification(title: "WhisperType", body: "\(name) appears after the engine's first start.")
+            return
+        }
+        NSWorkspace.shared.open(url)
+    }
+
     @objc private func toggleOverlay() {
         appState.showFloatingOverlay.toggle()
     }
@@ -301,8 +362,8 @@ class StatusBarController {
         
         let options: [NSApplication.AboutPanelOptionKey: Any] = [
             .applicationName: "WhisperType",
-            .applicationVersion: "1.1.0",
-            .version: "2",
+            .applicationVersion: "1.2.0",
+            .version: "3",
             .credits: credits,
             .applicationIcon: NSApp.applicationIconImage as Any
         ]

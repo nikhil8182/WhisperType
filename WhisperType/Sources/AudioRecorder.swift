@@ -2,13 +2,18 @@ import AVFoundation
 import Foundation
 
 /// Records audio using a PERSISTENT AVAudioEngine that lives for the entire app lifetime.
-/// Records in native mic format — Whisper handles any conversion needed.
+/// Writes the native-format WAV (fallback path for the whisper CLI) AND keeps a 16 kHz mono
+/// Float32 buffer in memory for the local engine (live partials + final).
 class AudioRecorder: NSObject {
     static let shared = AudioRecorder()
+
+    static let engineFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16000, channels: 1, interleaved: false)!
 
     private let engine = AVAudioEngine()
     private var audioFile: AVAudioFile?
     private var currentURL: URL?
+    private var converter: AVAudioConverter?
+    private var pcm16k = Data()
     private var isCurrentlyRecording = false
     private let lock = NSLock()
 
@@ -21,6 +26,18 @@ class AudioRecorder: NSObject {
         let tempDir = FileManager.default.temporaryDirectory
         let fileName = "whispertype_\(UUID().uuidString).wav"
         return tempDir.appendingPathComponent(fileName)
+    }
+
+    /// Seconds of audio captured so far (16 kHz buffer)
+    var capturedSeconds: Double {
+        lock.lock(); defer { lock.unlock() }
+        return Double(pcm16k.count / 4) / 16000.0
+    }
+
+    /// Copy of everything captured so far as Float32 LE 16 kHz mono
+    func snapshotPCM() -> Data {
+        lock.lock(); defer { lock.unlock() }
+        return pcm16k
     }
 
     func startRecording() {
@@ -54,10 +71,15 @@ class AudioRecorder: NSObject {
 
             // Record in NATIVE format — no conversion, no crashes
             let file = try AVAudioFile(forWriting: url, settings: recordingFormat.settings)
+            let conv = AVAudioConverter(from: recordingFormat, to: AudioRecorder.engineFormat)
+            let ratio = AudioRecorder.engineFormat.sampleRate / recordingFormat.sampleRate
 
             lock.lock()
             self.audioFile = file
             self.currentURL = url
+            self.converter = conv
+            self.pcm16k = Data()
+            self.pcm16k.reserveCapacity(16000 * 4 * 60)
             lock.unlock()
 
             inputNode.installTap(onBus: 0, bufferSize: 4096, format: recordingFormat) { [weak self] buffer, _ in
@@ -66,6 +88,7 @@ class AudioRecorder: NSObject {
                 self.lock.lock()
                 let recording = self.isCurrentlyRecording
                 let file = self.audioFile
+                let conv = self.converter
                 self.lock.unlock()
 
                 guard recording, let file = file else { return }
@@ -74,6 +97,27 @@ class AudioRecorder: NSObject {
                     try file.write(from: buffer)
                 } catch {
                     logError("AudioRecorder", "Write error: \(error)")
+                }
+
+                // Downsample to 16 kHz mono float for the engine
+                guard let conv = conv else { return }
+                let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 32
+                guard let out = AVAudioPCMBuffer(pcmFormat: AudioRecorder.engineFormat, frameCapacity: capacity) else { return }
+                var consumed = false
+                var convError: NSError?
+                let status = conv.convert(to: out, error: &convError) { _, outStatus in
+                    if consumed { outStatus.pointee = .noDataNow; return nil }
+                    consumed = true
+                    outStatus.pointee = .haveData
+                    return buffer
+                }
+                if status != .error, out.frameLength > 0, let ch = out.floatChannelData {
+                    let bytes = Data(bytes: ch[0], count: Int(out.frameLength) * MemoryLayout<Float>.size)
+                    self.lock.lock()
+                    self.pcm16k.append(bytes)
+                    self.lock.unlock()
+                } else if let e = convError {
+                    logWarn("AudioRecorder", "convert error: \(e.localizedDescription)")
                 }
             }
 
@@ -94,26 +138,30 @@ class AudioRecorder: NSObject {
             lock.lock()
             audioFile = nil
             currentURL = nil
+            converter = nil
             lock.unlock()
         }
     }
 
-    func stopRecording(completion: @escaping (URL?) -> Void) {
+    /// Stops and returns (wavURL, pcm16k). URL is nil if the file is missing/empty.
+    func stopRecording(completion: @escaping (URL?, Data) -> Void) {
         lock.lock()
         guard isCurrentlyRecording else {
             logWarn("AudioRecorder", "stopRecording called but not recording")
             lock.unlock()
-            completion(nil)
+            completion(nil, Data())
             return
         }
 
         isCurrentlyRecording = false
         let url = currentURL
+        let pcm = pcm16k
         audioFile = nil
         currentURL = nil
+        converter = nil
         lock.unlock()
 
-        logInfo("AudioRecorder", "Stopping recording")
+        logInfo("AudioRecorder", "Stopping recording (\(String(format: "%.1f", Double(pcm.count / 4) / 16000))s captured)")
 
         removeTapSafely()
 
@@ -121,10 +169,10 @@ class AudioRecorder: NSObject {
             engine.stop()
         }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             guard let url = url else {
                 logError("AudioRecorder", "No URL after stop")
-                completion(nil)
+                completion(nil, pcm)
                 return
             }
 
@@ -135,15 +183,20 @@ class AudioRecorder: NSObject {
                 fileSize = size
             }
 
-            logInfo("AudioRecorder", "Audio file exists: \(exists), size: \(fileSize) bytes")
-
             if exists && fileSize > 100 {
-                completion(url)
+                completion(url, pcm)
             } else {
                 logError("AudioRecorder", "Audio file missing or empty")
                 try? FileManager.default.removeItem(at: url)
-                completion(nil)
+                completion(nil, pcm)
             }
+        }
+    }
+
+    /// Discard the current recording without transcribing
+    func cancelRecording() {
+        stopRecording { url, _ in
+            if let url = url { try? FileManager.default.removeItem(at: url) }
         }
     }
 
@@ -158,6 +211,8 @@ class AudioRecorder: NSObject {
         isCurrentlyRecording = false
         audioFile = nil
         currentURL = nil
+        converter = nil
+        pcm16k = Data()
         lock.unlock()
 
         removeTapSafely()

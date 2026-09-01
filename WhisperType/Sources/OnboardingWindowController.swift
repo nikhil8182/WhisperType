@@ -316,7 +316,7 @@ class OnboardingViewModel: ObservableObject {
             SoundManager.shared.playStopSound()
         }
         
-        AudioRecorder.shared.stopRecording { [weak self] audioURL in
+        AudioRecorder.shared.stopRecording { [weak self] audioURL, _ in
             guard let self = self, let audioURL = audioURL else {
                 DispatchQueue.main.async {
                     self?.isTrialTranscribing = false

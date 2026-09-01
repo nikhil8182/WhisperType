@@ -10,25 +10,31 @@ WhisperType is a lightweight menu bar app that transcribes your voice and pastes
 
 <!-- ![WhisperType Screenshot](screenshot.png) -->
 
+## What's new in 1.2 (local engine)
+
+- ⚡ **MLX engine** — whisper large-v3-turbo on Apple Silicon, warm in memory. 11 s of speech transcribes in ~0.6 s.
+- 👀 **Live preview** — text appears in the overlay while you are still talking.
+- 🧠 **Smart cleanup** — a local Ollama model (qwen3.5:9b) removes fillers, fixes grammar, keeps your meaning. Nothing leaves the Mac.
+- 🎯 **App-aware tone** — WhatsApp gets a chat message, Mail/Gmail gets formal prose, Terminal/Cursor/Claude gets a clean AI prompt, Xcode gets literal text. Edit `apps.json`.
+- 📚 **Custom vocabulary** — names, products and jargon Whisper normally mangles. Edit `vocabulary.json` (terms + replacements), reloads live.
+- 🙌 **Hands-free** — double-tap Right Option to record without holding, tap once to stop.
+- 🗣 **Voice commands** — "new line", "new paragraph", "scratch that".
+- 🔁 **CLI fallback** — if the engine is not installed, the old `openai-whisper` CLI path still works.
+
 ## Features
 
 - 🎙 **Push-to-talk** — Hold Right Option key to record, release to transcribe
 - ⚡ **Instant paste** — Transcribed text is automatically pasted into the active app
-- 🔒 **100% local** — Audio never leaves your Mac. Whisper runs on-device
-- 🎯 **Multiple models** — Choose from tiny, base, small, medium, or turbo
-- 🌍 **Multi-language** — Supports English, Tamil, Hindi, Spanish, French, German, Japanese, Chinese, and auto-detect
+- 🔒 **100% local** — Audio never leaves your Mac
+- 🌍 **Multi-language** — English, Tamil, Hindi and more, or auto-detect
 - 📋 **History** — Browse and copy recent transcriptions
-- 🔊 **Sound effects** — Audio feedback for start/stop recording
-- 💬 **Floating overlay** — Visual indicator while recording/transcribing
-- 🚀 **Launch at login** — Optional auto-start via macOS Login Items
-- ⚙️ **Preferences** — Full settings panel with model, language, and history management
+- 🚀 **Launch at login**
 
 ## Requirements
 
-- **macOS 13.0** (Ventura) or later
-- **Apple Silicon** (M1/M2/M3) or Intel Mac
-- **OpenAI Whisper CLI** — local transcription engine
-- **ffmpeg** — audio processing
+- **macOS 13+**, Apple Silicon recommended (the MLX engine needs it; Intel falls back to the CLI)
+- **Python 3.11-3.13** (`brew install python@3.12`) for the engine
+- **Ollama** (`brew install ollama`) for smart cleanup, optional
 
 ## Installation
 
@@ -39,7 +45,7 @@ WhisperType is a lightweight menu bar app that transcribes your voice and pastes
 1. Download the DMG from the link above
 2. Open the DMG — drag **WhisperType** to the **Applications** folder
 3. Launch WhisperType — grant Microphone and Accessibility permissions when prompted
-4. **Dependencies are installed automatically on first launch** — a setup window will guide you through it
+4. Install the engine once: `bash /Applications/WhisperType.app/Contents/Resources/install_engine.sh` (downloads ~1.6 GB model + pulls the Ollama cleanup model). `./build-app.sh --install` does this for you when building from source.
 
 > All releases: [github.com/nikhil8182/WhisperType/releases](https://github.com/nikhil8182/WhisperType/releases)
 
@@ -72,9 +78,9 @@ cd WhisperType
 ## Usage
 
 1. **Launch** WhisperType — it appears as a microphone icon in your menu bar
-2. **Hold Right Option (⌥)** key to start recording
-3. **Speak** clearly
-4. **Release** the key — your speech is transcribed and pasted into the active text field
+2. **Hold Right Option (⌥)** to record, watch the live preview, **release** to paste. Or **double-tap** for hands-free and tap once to stop.
+3. Say "new line", "new paragraph" or "scratch that" while dictating.
+4. Config lives in `~/Library/Application Support/WhisperType/`: `vocabulary.json`, `apps.json`, `config.json` (engine + LLM model). Logs: `~/Library/Logs/WhisperType/`.
 
 ### Menu Bar
 

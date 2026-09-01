@@ -1,248 +1,308 @@
 import Cocoa
 import Carbon
 
+/// Right Option (keyCode 61 by default):
+///   hold          = push-to-talk (release to transcribe + paste)
+///   double-tap    = hands-free recording, tap once more to stop
+/// Live preview: while recording, the buffer is re-transcribed every ~1.5 s and shown in the overlay.
 class HotkeyManager {
     static let shared = HotkeyManager()
 
     private var appState: AppState?
     private var flagsMonitor: Any?
     private var localFlagsMonitor: Any?
-    private var isRecording = false
-    private var recordingStartTime: Date?
     private var overlayWindow: OverlayWindowController?
     private let lock = NSLock()
 
-    /// Prevents re-entrant calls from rapid key events
+    // state (main thread only, except reads under lock from event thread)
+    private var isRecording = false
     private var isProcessing = false
+    private var handsFree = false
+    private var ignoreNextRelease = false
+    private var recordingStartTime: Date?
+    private var lastShortTap: Date?
+    private var frontApp = EngineClient.FrontApp(bundle: "", name: "", title: "")
 
-    /// Consecutive failure count — triggers harder reset
+    // live preview
+    private var partialTimer: Timer?
+    private var partialInFlight = false
+    private var lastPartialSeconds: Double = 0
+    private var lastPartialText = ""
+
     private var consecutiveFailures = 0
     private static let maxConsecutiveFailures = 3
+    private static let shortTap: TimeInterval = 0.35
+    private static let doubleTapWindow: TimeInterval = 0.6
 
     private init() {}
 
     func setup(appState: AppState) {
         self.appState = appState
-        setupFlagsMonitor()
-        logInfo("HotkeyManager", "Setup complete. Hotkey keyCode=\(appState.hotkeyKeyCode)")
-    }
-
-    private func setupFlagsMonitor() {
         flagsMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.flagsChanged]) { [weak self] event in
             self?.handleFlagsChanged(event)
         }
-
         localFlagsMonitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged]) { [weak self] event in
             self?.handleFlagsChanged(event)
             return event
         }
-        logInfo("HotkeyManager", "Flags monitors registered")
+        logInfo("HotkeyManager", "Setup complete. Hotkey keyCode=\(appState.hotkeyKeyCode)")
     }
 
     private func handleFlagsChanged(_ event: NSEvent) {
         guard let appState = appState else { return }
-
-        let keyCode = Int(event.keyCode)
-        let targetKeyCode = appState.hotkeyKeyCode
-
-        guard keyCode == targetKeyCode else { return }
-
-        let isOptionPressed = event.modifierFlags.contains(.option)
-
-        lock.lock()
-        let currentlyRecording = isRecording
-        let processing = isProcessing
-        lock.unlock()
-
+        guard Int(event.keyCode) == appState.hotkeyKeyCode else { return }
+        let pressed = event.modifierFlags.contains(.option)
         DispatchQueue.main.async {
-            if isOptionPressed && !currentlyRecording && !processing {
-                logInfo("HotkeyManager", "Hotkey pressed — starting recording")
-                self.startRecording()
-            } else if !isOptionPressed && currentlyRecording {
-                logInfo("HotkeyManager", "Hotkey released — stopping recording")
-                self.stopRecordingAndTranscribe()
-            }
+            if pressed { self.onKeyDown() } else { self.onKeyUp() }
         }
     }
 
+    // MARK: - Key events (main thread)
+
+    private func onKeyDown() {
+        if handsFree && isRecording {
+            ignoreNextRelease = true
+            logInfo("HotkeyManager", "Hands-free stop")
+            finishRecording()
+            return
+        }
+        guard !isRecording, !isProcessing else { return }
+        startRecording()
+    }
+
+    private func onKeyUp() {
+        if ignoreNextRelease { ignoreNextRelease = false; return }
+        guard isRecording, !handsFree else { return }
+        let duration = Date().timeIntervalSince(recordingStartTime ?? Date())
+        if duration < HotkeyManager.shortTap {
+            let now = Date()
+            if let t = lastShortTap, now.timeIntervalSince(t) < HotkeyManager.doubleTapWindow {
+                lastShortTap = nil
+                handsFree = true
+                logInfo("HotkeyManager", "Double-tap → hands-free mode")
+                showOverlay(text: "Hands-free · tap ⌥ to stop", kind: .handsFree)
+                return
+            }
+            lastShortTap = now
+            logInfo("HotkeyManager", "Short tap (\(String(format: "%.2f", duration))s), discarding")
+            cancelRecording()
+            return
+        }
+        lastShortTap = nil
+        logInfo("HotkeyManager", "Hotkey released — stopping recording")
+        finishRecording()
+    }
+
+    // MARK: - Recording lifecycle
+
     private func startRecording() {
         guard let appState = appState else { return }
-        
-        // Close onboarding window if open — its SwiftUI NSHostingView causes
-        // constraint crashes when AppState updates during recording (macOS 26 bug)
+        guard appState.status == .idle else {
+            logWarn("HotkeyManager", "startRecording blocked: status is \(appState.status.rawValue)")
+            return
+        }
+
         if !UserDefaults.standard.bool(forKey: "hasCompletedOnboarding") {
             UserDefaults.standard.set(true, forKey: "hasCompletedOnboarding")
             OnboardingWindowController.shared.close()
             NSApp.setActivationPolicy(.accessory)
         }
 
-        lock.lock()
-        guard !isRecording && !isProcessing else {
-            logWarn("HotkeyManager", "startRecording blocked: isRecording=\(isRecording), isProcessing=\(isProcessing)")
-            lock.unlock()
-            return
-        }
-
-        let currentStatus = appState.status
-        guard currentStatus == .idle else {
-            logWarn("HotkeyManager", "startRecording blocked: status is \(currentStatus.rawValue)")
-            lock.unlock()
-            return
-        }
+        // Snapshot the target app BEFORE any UI of ours appears
+        frontApp = EngineClient.captureFrontApp()
 
         isRecording = true
-        isProcessing = true
+        handsFree = false
         recordingStartTime = Date()
-        lock.unlock()
+        lastPartialText = ""
+        lastPartialSeconds = 0
+        partialInFlight = false
 
         appState.setStatus(.recording)
-
-        if appState.playSounds {
-            SoundManager.shared.playStartSound()
-        }
-
-        if appState.showFloatingOverlay {
-            showOverlay(text: "🎙 Recording...")
-        }
+        if appState.playSounds { SoundManager.shared.playStartSound() }
+        if appState.showFloatingOverlay { showOverlay(text: "Listening…", kind: .recording) }
 
         AudioRecorder.shared.startRecording()
-        logInfo("HotkeyManager", "Audio recording started")
+        logInfo("HotkeyManager", "Recording started (target: \(frontApp.name) \(frontApp.bundle))")
 
-        lock.lock()
-        isProcessing = false
-        lock.unlock()
+        if appState.livePreview && appState.engineAvailable {
+            partialTimer?.invalidate()
+            partialTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
+                self?.tickPartial()
+            }
+        }
     }
 
-    private func stopRecordingAndTranscribe() {
-        guard let appState = appState else { return }
-
-        lock.lock()
-        guard isRecording else {
-            logWarn("HotkeyManager", "stopRecording called but not recording")
-            lock.unlock()
-            return
-        }
-
+    private func cancelRecording() {
+        stopPartialTimer()
         isRecording = false
+        handsFree = false
+        recordingStartTime = nil
+        AudioRecorder.shared.cancelRecording()
+        appState?.setStatus(.idle)
+        hideOverlay()
+    }
+
+    private func finishRecording() {
+        guard let appState = appState, isRecording else { return }
+        stopPartialTimer()
+        isRecording = false
+        handsFree = false
         isProcessing = true
         let duration = Date().timeIntervalSince(recordingStartTime ?? Date())
-        lock.unlock()
-
+        let target = frontApp
         logInfo("HotkeyManager", "Recording duration: \(String(format: "%.1f", duration))s")
 
-        AudioRecorder.shared.stopRecording { [weak self] audioURL in
+        AudioRecorder.shared.stopRecording { [weak self] audioURL, pcm in
             guard let self = self else { return }
 
+            let seconds = Double(pcm.count / 4) / 16000.0
+            if seconds < 0.4 && audioURL == nil {
+                logInfo("HotkeyManager", "Nothing captured, skipping")
+                self.resetState(); appState.setStatus(.idle); self.hideOverlay()
+                return
+            }
+
+            appState.setStatus(.transcribing)
+            if appState.playSounds { SoundManager.shared.playStopSound() }
+            if appState.showFloatingOverlay { self.showOverlay(text: "Transcribing…", kind: .transcribing) }
+
+            if appState.engineAvailable && pcm.count > 16000 {
+                EngineClient.shared.transcribe(pcm: pcm, language: appState.language, partial: false) { [weak self] result in
+                    guard let self = self else { return }
+                    if let url = audioURL { try? FileManager.default.removeItem(at: url) }
+                    DispatchQueue.main.async {
+                        switch result {
+                        case .success(let t):
+                            logInfo("HotkeyManager", "Engine transcribed in \(t.ms)ms: \(t.text.prefix(80))")
+                            self.deliver(raw: t.text, duration: duration, engine: "turbo", target: target)
+                        case .failure(let e):
+                            logError("HotkeyManager", "Engine transcription failed: \(e.localizedDescription)")
+                            self.handleFailure(message: "Transcription failed: \(e.localizedDescription)")
+                        }
+                    }
+                }
+                return
+            }
+
+            // Fallback: whisper CLI on the WAV
             guard let audioURL = audioURL else {
-                logError("HotkeyManager", "stopRecording returned nil URL")
-                self.handleFailure(appState: appState, message: "Recording failed — no audio file")
+                self.handleFailure(message: "Recording failed — no audio file")
                 return
             }
-
-            // Skip very short recordings (< 0.3s — likely accidental)
-            if duration < 0.3 {
-                logInfo("HotkeyManager", "Recording too short (\(String(format: "%.2f", duration))s), skipping")
-                self.resetState()
-                DispatchQueue.main.async {
-                    appState.setStatus(.idle)
-                    self.hideOverlay()
-                }
-                try? FileManager.default.removeItem(at: audioURL)
-                return
-            }
-
-            DispatchQueue.main.async {
-                appState.setStatus(.transcribing)
-
-                if appState.playSounds {
-                    SoundManager.shared.playStopSound()
-                }
-
-                if appState.showFloatingOverlay {
-                    self.showOverlay(text: "⏳ Transcribing...")
-                }
-            }
-
-            logInfo("HotkeyManager", "Sending to WhisperManager for transcription")
+            logInfo("HotkeyManager", "Engine unavailable → whisper CLI fallback")
             WhisperManager.shared.transcribe(audioURL: audioURL, model: appState.whisperModel, language: appState.language) { [weak self] result in
                 guard let self = self else { return }
-
                 try? FileManager.default.removeItem(at: audioURL)
-                logDebug("HotkeyManager", "Cleaned up audio file")
-
                 DispatchQueue.main.async {
-                    self.hideOverlay()
-
                     switch result {
                     case .success(let text):
-                        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                        guard !trimmed.isEmpty else {
-                            logWarn("HotkeyManager", "Transcription returned empty text")
-                            self.resetState()
-                            appState.setStatus(.idle)
-                            return
-                        }
-
-                        logInfo("HotkeyManager", "Transcription success: \(trimmed.prefix(80))...")
-
-                        // Reset failure counter on success
-                        self.consecutiveFailures = 0
-
-                        let entry = TranscriptionEntry(text: trimmed, duration: duration, model: appState.whisperModel)
-                        appState.addToHistory(entry)
-
-                        TextPaster.shared.pasteText(trimmed)
-
-                        // Delay reset to let paste + clipboard restore finish
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-                            self.resetState()
-                            appState.setStatus(.idle)
-                        }
-
+                        self.deliver(raw: text, duration: duration, engine: appState.whisperModel, target: target)
                     case .failure(let error):
                         logError("HotkeyManager", "Transcription failed: \(error.localizedDescription)")
-                        self.handleFailure(appState: appState, message: "Transcription failed: \(error.localizedDescription)")
+                        self.handleFailure(message: "Transcription failed: \(error.localizedDescription)")
                     }
                 }
             }
         }
     }
 
-    /// Handle failures with escalating recovery
-    private func handleFailure(appState: AppState, message: String) {
+    /// Polish (if enabled + engine up) then paste. Main thread.
+    private func deliver(raw: String, duration: TimeInterval, engine: String, target: EngineClient.FrontApp) {
+        guard let appState = appState else { return }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            logWarn("HotkeyManager", "Transcription returned empty text")
+            resetState(); appState.setStatus(.idle); hideOverlay()
+            return
+        }
+
+        let finish: (String, String) -> Void = { [weak self] text, label in
+            guard let self = self else { return }
+            self.consecutiveFailures = 0
+            appState.addToHistory(TranscriptionEntry(text: text, duration: duration, model: label))
+            self.hideOverlay()
+            TextPaster.shared.pasteText(text)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                self.resetState()
+                appState.setStatus(.idle)
+            }
+        }
+
+        if appState.smartCleanup && appState.engineAvailable {
+            if appState.showFloatingOverlay { showOverlay(text: "Polishing…", kind: .polishing) }
+            EngineClient.shared.polish(text: trimmed, app: target, styleOverride: appState.styleOverride) { p in
+                DispatchQueue.main.async {
+                    logInfo("HotkeyManager", "Polished [\(p.style)\(p.usedLLM ? "/llm" : "")] in \(p.ms)ms: \(p.text.prefix(80))")
+                    finish(p.text, p.usedLLM ? "\(engine)+\(p.style)" : engine)
+                }
+            }
+        } else {
+            finish(trimmed, engine)
+        }
+    }
+
+    // MARK: - Live preview
+
+    private func tickPartial() {
+        guard isRecording, !partialInFlight, let appState = appState, appState.engineAvailable else { return }
+        let secs = AudioRecorder.shared.capturedSeconds
+        guard secs >= 1.0, secs - lastPartialSeconds >= 0.8 else { return }
+        partialInFlight = true
+        lastPartialSeconds = secs
+        let pcm = AudioRecorder.shared.snapshotPCM()
+        EngineClient.shared.transcribe(pcm: pcm, language: appState.language, partial: true) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.partialInFlight = false
+                guard self.isRecording else { return }
+                if case .success(let t) = result, !t.text.isEmpty {
+                    self.lastPartialText = t.text
+                    let tail = String(t.text.suffix(60))
+                    self.showOverlay(text: (t.text.count > 60 ? "…" : "") + tail,
+                                     kind: self.handsFree ? .handsFree : .recording)
+                }
+            }
+        }
+    }
+
+    private func stopPartialTimer() {
+        partialTimer?.invalidate()
+        partialTimer = nil
+    }
+
+    // MARK: - Failure / reset
+
+    private func handleFailure(message: String) {
         consecutiveFailures += 1
         logWarn("HotkeyManager", "Failure #\(consecutiveFailures): \(message)")
-
         if consecutiveFailures >= HotkeyManager.maxConsecutiveFailures {
-            logError("HotkeyManager", "Too many consecutive failures (\(consecutiveFailures)), performing hard reset")
+            logError("HotkeyManager", "Too many consecutive failures, performing hard reset")
             AudioRecorder.shared.forceReset()
             consecutiveFailures = 0
         }
-
         resetState()
         DispatchQueue.main.async {
-            appState.setStatus(.idle)
-            appState.showError(message)
+            self.appState?.setStatus(.idle)
+            self.appState?.showError(message)
             self.hideOverlay()
         }
     }
 
-    /// Reset all internal state to allow next recording cycle
     private func resetState() {
-        lock.lock()
+        stopPartialTimer()
         isRecording = false
         isProcessing = false
+        handsFree = false
+        ignoreNextRelease = false
         recordingStartTime = nil
-        lock.unlock()
         logDebug("HotkeyManager", "State reset — ready for next cycle")
     }
 
-    private func showOverlay(text: String) {
+    private func showOverlay(text: String, kind: OverlayWindowController.Kind) {
         assert(Thread.isMainThread)
-        if overlayWindow == nil {
-            overlayWindow = OverlayWindowController()
-        }
-        overlayWindow?.show(text: text)
+        if overlayWindow == nil { overlayWindow = OverlayWindowController() }
+        overlayWindow?.show(text: text, kind: kind)
     }
 
     private func hideOverlay() {
@@ -251,11 +311,7 @@ class HotkeyManager {
     }
 
     deinit {
-        if let monitor = flagsMonitor {
-            NSEvent.removeMonitor(monitor)
-        }
-        if let monitor = localFlagsMonitor {
-            NSEvent.removeMonitor(monitor)
-        }
+        if let monitor = flagsMonitor { NSEvent.removeMonitor(monitor) }
+        if let monitor = localFlagsMonitor { NSEvent.removeMonitor(monitor) }
     }
 }

@@ -46,6 +46,8 @@ class AppState: ObservableObject {
     @Published var hasAccessibilityPermission: Bool = false
     @Published var hasWhisperCLI: Bool = false
     @Published var hasFfmpeg: Bool = false
+    @Published var engineAvailable: Bool = false   // local MLX engine answering on :4877
+    @Published var llmAvailable: Bool = false      // Ollama cleanup model reachable
     
     // Settings
     @AppStorage("whisperModel") var whisperModel: String = "base"
@@ -55,6 +57,9 @@ class AppState: ObservableObject {
     @AppStorage("hotkeyKeyCode") var hotkeyKeyCode: Int = 61
     @AppStorage("language") var language: String = "en"
     @AppStorage("maxHistoryCount") var maxHistoryCount: Int = 50
+    @AppStorage("smartCleanup") var smartCleanup: Bool = true      // LLM polish before paste
+    @AppStorage("livePreview") var livePreview: Bool = true        // partial text while recording
+    @AppStorage("styleOverride") var styleOverride: String = "auto" // auto|casual|formal|prompt|literal|neutral
     
     private init() {
         loadHistory()
@@ -99,14 +104,15 @@ class AppState: ObservableObject {
     }
     
     func updatePermissionState() {
-        if hasMicPermission && hasAccessibilityPermission && hasWhisperCLI && hasFfmpeg {
+        let speechOK = engineAvailable || (hasWhisperCLI && hasFfmpeg)
+        if hasMicPermission && hasAccessibilityPermission && speechOK {
             permissionState = .ready
         } else if !hasMicPermission || !hasAccessibilityPermission {
             permissionState = .missingPermissions
         } else {
             permissionState = .error
         }
-        logInfo("AppState", "Permission state: \(permissionState.rawValue) [mic=\(hasMicPermission) ax=\(hasAccessibilityPermission) whisper=\(hasWhisperCLI) ffmpeg=\(hasFfmpeg)]")
+        logInfo("AppState", "Permission state: \(permissionState.rawValue) [mic=\(hasMicPermission) ax=\(hasAccessibilityPermission) engine=\(engineAvailable) llm=\(llmAvailable) cli=\(hasWhisperCLI) ffmpeg=\(hasFfmpeg)]")
     }
     
     func addToHistory(_ entry: TranscriptionEntry) {
