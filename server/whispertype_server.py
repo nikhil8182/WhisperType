@@ -39,6 +39,7 @@ DEFAULT_CONFIG = {
     "llm_timeout_s": 12,
     "llm_keep_alive": "60m",
     "min_words_for_llm": 3,
+    "no_llm_styles": ["prompt"],
 }
 
 DEFAULT_VOCAB = {
@@ -293,7 +294,7 @@ def polish(text, app_bundle, app_name, window_title, override):
     text = voice_commands(apply_replacements(text))
     style = pick_style(app_bundle, app_name, window_title, override)
     words = len(text.split())
-    if words < CONFIG.cfg["min_words_for_llm"]:
+    if words < CONFIG.cfg["min_words_for_llm"] or style in (CONFIG.cfg.get("no_llm_styles") or []):
         t = text.strip()
         return (t[:1].upper() + t[1:]) if t else t, style, False
     if not ollama_alive():
