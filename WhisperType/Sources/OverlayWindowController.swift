@@ -1,275 +1,263 @@
 import Cocoa
 
-/// Floating "listening" pill. Pure AppKit (no SwiftUI: NSHostingView crashes on macOS 26).
-///
-///  ┌──────────────────────────────────────────────────────────┐
-///  │ (Iniyal)  LISTENING                       release ⌥ to paste │
-///  │           ▁▃▅▇▅▃▁ live waveform  /  live text tail          │
-///  └──────────────────────────────────────────────────────────┘
-class OverlayWindowController {
-    enum Kind { case recording, handsFree, transcribing, polishing }
+/// Non-activating AppKit HUD: it never takes focus from the dictation target.
+final class OverlayWindowController {
+    enum Kind { case recording, handsFree, transcribing, polishing, ready, attention, error }
 
-    private static let width: CGFloat = 520
-    private static let height: CGFloat = 68
-    private static let avatarSize: CGFloat = 44
-
-    private var window: NSWindow?
+    private let width: CGFloat = 440
+    private let height: CGFloat = 112
+    private var window: NSPanel?
     private var stageLabel: NSTextField!
     private var textLabel: NSTextField!
     private var hintLabel: NSTextField!
     private var waveform: WaveformView!
-    private var avatarRing: NSView!
+    private var statusSymbol: NSImageView!
     private var progress: NSProgressIndicator!
+    private var accentLine: NSView!
     private var currentKind: Kind?
+    private var presentationID = UUID()
     private var hideWork: DispatchWorkItem?
-
-    // MARK: - API
+    private var previewTimer: Timer?
+    private var isPreview = false
 
     func show(text: String, kind: Kind) {
         if window == nil { createWindow() }
+        presentationID = UUID()
         hideWork?.cancel()
-        if kind != currentKind {
+        hideWork = nil
+        let style = style(for: kind)
+        stageLabel.stringValue = style.title
+        stageLabel.textColor = style.accent
+        hintLabel.stringValue = isPreview ? "Preview · no microphone" : style.hint
+        textLabel.stringValue = text.isEmpty ? style.placeholder : text
+        textLabel.textColor = text.isEmpty ? .secondaryLabelColor : .labelColor
+        textLabel.setAccessibilityLabel(textLabel.stringValue)
+        accentLine.layer?.backgroundColor = style.accent.withAlphaComponent(0.8).cgColor
+        waveform.color = style.accent
+        let listening = kind == .recording || kind == .handsFree
+        waveform.isHidden = !listening
+        statusSymbol.isHidden = kind != .ready && kind != .attention && kind != .error
+        statusSymbol.image = NSImage(systemSymbolName: (kind == .attention || kind == .error) ? "exclamationmark.circle.fill" : "checkmark.circle.fill", accessibilityDescription: style.title)
+        statusSymbol.contentTintColor = style.accent
+        progress.isHidden = listening || !statusSymbol.isHidden
+        if currentKind != kind {
+            if listening { waveform.start(demo: isPreview) } else { waveform.stop() }
+            if progress.isHidden { progress.stopAnimation(nil) } else { progress.startAnimation(nil) }
             currentKind = kind
-            applyKind(kind)
         }
-        let hasText = !text.isEmpty
-        textLabel.stringValue = text
-        textLabel.isHidden = !hasText
-        waveform.isHidden = hasText || !(kind == .recording || kind == .handsFree)
-        guard let w = window, let glass = w.contentView else { return }
-        if !w.isVisible {
-            w.alphaValue = 1
-            glass.alphaValue = 0
-            w.orderFrontRegardless()
-            NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = 0.18
-                ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
-                glass.animator().alphaValue = 1
+        guard let window, let content = window.contentView else { return }
+        // Choose the active screen afresh for each recording, including after a display change.
+        if !window.isVisible {
+            let screen = NSScreen.main ?? NSScreen.screens.first
+            if let frame = screen?.visibleFrame {
+                window.setFrameOrigin(NSPoint(x: frame.midX - width / 2, y: frame.minY + 24))
             }
-            logInfo("Overlay", "shown kind=\(kind) frame=\(w.frame) screen=\(NSScreen.main?.frame ?? .zero) visible=\(w.isVisible)")
+            content.alphaValue = reducedMotion ? 1 : 0
+            window.orderFrontRegardless()
+        }
+        // Also restore opacity if a new recording interrupts the previous fade.
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = reducedMotion ? 0 : 0.16
+            content.animator().alphaValue = 1
         }
     }
 
-    func hide() {
-        guard let w = window, w.isVisible else { return }
-        waveform.stop()
-        progress.stopAnimation(nil)
-        currentKind = nil
+    func hide(after delay: TimeInterval = 0.25) {
+        guard let window, window.isVisible else { return }
+        hideWork?.cancel()
+        let id = presentationID
         let work = DispatchWorkItem { [weak self] in
-            guard let glass = w.contentView else { w.orderOut(nil); return }
-            NSAnimationContext.runAnimationGroup({ ctx in
-                ctx.duration = 0.22
-                glass.animator().alphaValue = 0
-            }, completionHandler: {
-                if self?.hideWork?.isCancelled == false { w.orderOut(nil) }
+            guard let self, self.presentationID == id, let content = window.contentView else { return }
+            self.waveform.stop()
+            self.progress.stopAnimation(nil)
+            self.currentKind = nil
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = self.reducedMotion ? 0 : 0.18
+                content.animator().alphaValue = 0
+            }, completionHandler: { [weak self] in
+                guard let self, self.presentationID == id else { return }
+                window.orderOut(nil)
+                self.currentKind = nil
             })
         }
         hideWork = work
-        // Let the final text sit for a beat before fading
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
-    // MARK: - Stage styling
+    /// A visual tour of the real panel. No audio, history entries, or clipboard writes.
+    func preview() {
+        cancelPreview()
+        isPreview = true
+        let stages: [(Kind, String)] = [
+            (.recording, "Speak naturally. Iniyal takes care of the typing."),
+            (.handsFree, "Keep talking, without holding a key."),
+            (.transcribing, "Your words are becoming text."),
+            (.polishing, "A little polish. Still your words."),
+            (.ready, "Ready for wherever you’re writing.")
+        ]
+        var index = 0
+        show(text: stages[0].1, kind: stages[0].0)
+        previewTimer = Timer.scheduledTimer(withTimeInterval: 1.6, repeats: true) { [weak self] timer in
+            guard let self else { timer.invalidate(); return }
+            index += 1
+            guard index < stages.count else {
+                timer.invalidate()
+                self.previewTimer = nil
+                self.isPreview = false
+                self.hide()
+                return
+            }
+            self.show(text: stages[index].1, kind: stages[index].0)
+        }
+        if let previewTimer { RunLoop.main.add(previewTimer, forMode: .common) }
+    }
 
-    private struct Style { let stage: String; let hint: String; let accent: NSColor }
+    func cancelPreview() {
+        previewTimer?.invalidate()
+        previewTimer = nil
+        if isPreview {
+            isPreview = false
+            presentationID = UUID()
+            hideWork?.cancel()
+            waveform?.stop()
+            progress?.stopAnimation(nil)
+            window?.orderOut(nil)
+            currentKind = nil
+        }
+    }
 
+    private var reducedMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
+    private struct Style { let title: String; let hint: String; let placeholder: String; let accent: NSColor }
     private func style(for kind: Kind) -> Style {
+        let key = AppState.shared.hotkeyKeyCode == 58 ? "Left ⌥" : "Right ⌥"
         switch kind {
-        case .recording:    return Style(stage: "LISTENING",   hint: "release ⌥ to paste",   accent: NSColor(srgbRed: 0.22, green: 0.74, blue: 0.97, alpha: 1))   // sky #38BDF8
-        case .handsFree:    return Style(stage: "HANDS-FREE",  hint: "tap ⌥ to stop",        accent: NSColor(srgbRed: 0.05, green: 0.69, blue: 0.29, alpha: 1))   // green #0DB14B
-        case .transcribing: return Style(stage: "TRANSCRIBING", hint: "",                    accent: NSColor(srgbRed: 0.96, green: 0.65, blue: 0.14, alpha: 1))   // amber #F5A623
-        case .polishing:    return Style(stage: "POLISHING",   hint: "",                     accent: NSColor(srgbRed: 0.66, green: 0.55, blue: 0.98, alpha: 1))   // violet
+        case .recording:
+            return Style(title: "Listening", hint: "Release \(key)", placeholder: "Go ahead, I’m listening…", accent: .systemMint)
+        case .handsFree:
+            return Style(title: "Hands-free", hint: "Tap \(key) to finish", placeholder: "Take your time. No need to hold the key.", accent: .systemGreen)
+        case .transcribing:
+            return Style(title: "Finding your words", hint: "On your Mac", placeholder: "Turning your voice into text…", accent: .systemTeal)
+        case .polishing:
+            return Style(title: "Finishing touches", hint: "On your Mac", placeholder: "Tidying up your words…", accent: .systemPurple)
+        case .ready:
+            return Style(title: "Dictation ready", hint: "Saved in History", placeholder: "Your words are ready.", accent: .systemGreen)
+        case .error:
+            return Style(title: "Couldn’t finish", hint: "Try again", placeholder: "Please try another dictation.", accent: .systemOrange)
+        case .attention:
+            return Style(title: "One more step", hint: "Saved in History", placeholder: "Your text is available in History.", accent: .systemOrange)
         }
     }
 
-    private func applyKind(_ kind: Kind) {
-        let st = style(for: kind)
-        stageLabel.stringValue = st.stage
-        stageLabel.textColor = st.accent
-        hintLabel.stringValue = st.hint
-        waveform.color = st.accent
-        NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0.25
-            avatarRing.animator().layer?.borderColor = st.accent.cgColor
-        }
-        avatarRing.layer?.borderColor = st.accent.cgColor
-        avatarRing.layer?.shadowColor = st.accent.cgColor
-        switch kind {
-        case .recording, .handsFree:
-            progress.stopAnimation(nil); progress.isHidden = true
-            waveform.start()
-        case .transcribing, .polishing:
-            waveform.stop()
-            progress.isHidden = false
-            progress.startAnimation(nil)
-        }
+    private func label(_ font: NSFont, frame: NSRect) -> NSTextField {
+        let label = NSTextField(labelWithString: "")
+        label.font = font
+        label.frame = frame
+        return label
     }
-
-    // MARK: - Build
 
     private func createWindow() {
-        let W = OverlayWindowController.width, H = OverlayWindowController.height
-        let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: W, height: H),
-                         styleMask: [.borderless], backing: .buffered, defer: false)
-        w.isOpaque = false
-        w.backgroundColor = .clear
-        w.level = .floating
-        w.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
-        w.hasShadow = true
-        w.ignoresMouseEvents = true
-        w.appearance = NSAppearance(named: .darkAqua)
+        let bounds = NSRect(x: 0, y: 0, width: width, height: height)
+        let panel = NSPanel(contentRect: bounds, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        panel.title = "Iniyal recording panel"
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.level = .floating
+        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
+        panel.hidesOnDeactivate = false
+        panel.hasShadow = true
+        panel.ignoresMouseEvents = true
+        panel.appearance = NSAppearance(named: .darkAqua)
 
-        // Glass pill
-        let glass = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: W, height: H))
+        let glass = NSVisualEffectView(frame: bounds)
         glass.material = .hudWindow
         glass.blendingMode = .behindWindow
         glass.state = .active
         glass.wantsLayer = true
-        glass.layer?.cornerRadius = H / 2
+        glass.layer?.cornerRadius = 24
         glass.layer?.cornerCurve = .continuous
         glass.layer?.masksToBounds = true
+        glass.layer?.borderWidth = 1
+        glass.layer?.borderColor = NSColor.white.withAlphaComponent(0.16).cgColor
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency {
+            glass.material = .windowBackground
+        }
 
-        let tint = NSView(frame: glass.bounds)
-        tint.wantsLayer = true
-        tint.layer?.backgroundColor = NSColor(srgbRed: 0.04, green: 0.06, blue: 0.10, alpha: 0.72).cgColor  // navy #0A0F1A
-        tint.autoresizingMask = [.width, .height]
-        glass.addSubview(tint)
-
-        let border = NSView(frame: glass.bounds)
-        border.wantsLayer = true
-        border.layer?.cornerRadius = H / 2
-        border.layer?.cornerCurve = .continuous
-        border.layer?.borderWidth = 1
-        border.layer?.borderColor = NSColor(white: 1, alpha: 0.10).cgColor
-        border.autoresizingMask = [.width, .height]
-        glass.addSubview(border)
-
-        // Avatar with accent ring
-        let A = OverlayWindowController.avatarSize
-        let ring = NSView(frame: NSRect(x: 12, y: (H - A) / 2, width: A, height: A))
-        ring.wantsLayer = true
-        ring.layer?.cornerRadius = A / 2
-        ring.layer?.borderWidth = 2
-        ring.layer?.borderColor = NSColor.systemBlue.cgColor
-        ring.layer?.shadowOpacity = 0.55
-        ring.layer?.shadowRadius = 8
-        ring.layer?.shadowOffset = .zero
-        glass.addSubview(ring)
-        avatarRing = ring
-
-        let avatar = NSImageView(frame: ring.bounds.insetBy(dx: 3, dy: 3))
+        let avatar = NSImageView(frame: NSRect(x: 18, y: 59, width: 36, height: 36))
         avatar.wantsLayer = true
-        avatar.layer?.cornerRadius = avatar.bounds.width / 2
+        avatar.layer?.cornerRadius = 18
         avatar.layer?.masksToBounds = true
         avatar.imageScaling = .scaleProportionallyUpOrDown
-        if let path = Bundle.main.path(forResource: "iniyal_face", ofType: "png"), let img = NSImage(contentsOfFile: path) {
-            avatar.image = img
-        } else {
-            avatar.image = NSImage(systemSymbolName: "waveform.circle.fill", accessibilityDescription: nil)
-            avatar.contentTintColor = .white
+        if let path = Bundle.main.path(forResource: "iniyal_face", ofType: "png") {
+            avatar.image = NSImage(contentsOfFile: path)
         }
-        ring.addSubview(avatar)
+        avatar.setAccessibilityLabel("Iniyal")
+        glass.addSubview(avatar)
 
-        // Text column
-        let left = 12 + A + 14
-        let stage = NSTextField(labelWithString: "LISTENING")
-        stage.frame = NSRect(x: left, y: H - 26, width: 200, height: 14)
-        stage.font = NSFont.systemFont(ofSize: 10, weight: .bold)
-        stage.textColor = .systemBlue
-        stage.alignment = .left
-        if let f = stage.font { stage.attributedStringValue = NSAttributedString(string: "LISTENING", attributes: [.font: f, .kern: 1.6, .foregroundColor: NSColor.systemBlue]) }
-        glass.addSubview(stage)
-        stageLabel = stage
+        stageLabel = label(.systemFont(ofSize: 14, weight: .semibold), frame: NSRect(x: 65, y: 79, width: 238, height: 19))
+        glass.addSubview(stageLabel)
+        hintLabel = label(.systemFont(ofSize: 11, weight: .medium), frame: NSRect(x: 65, y: 60, width: 260, height: 16))
+        hintLabel.textColor = .secondaryLabelColor
+        glass.addSubview(hintLabel)
 
-        let hint = NSTextField(labelWithString: "")
-        hint.frame = NSRect(x: W - 220, y: H - 26, width: 204, height: 14)
-        hint.font = NSFont.systemFont(ofSize: 10.5, weight: .medium)
-        hint.textColor = NSColor(white: 1, alpha: 0.45)
-        hint.alignment = .right
-        glass.addSubview(hint)
-        hintLabel = hint
+        waveform = WaveformView(frame: NSRect(x: 348, y: 66, width: 70, height: 26))
+        glass.addSubview(waveform)
+        progress = NSProgressIndicator(frame: NSRect(x: 390, y: 68, width: 20, height: 20))
+        progress.style = .spinning
+        progress.controlSize = .small
+        progress.isIndeterminate = true
+        glass.addSubview(progress)
+        statusSymbol = NSImageView(frame: NSRect(x: 388, y: 66, width: 24, height: 24))
+        glass.addSubview(statusSymbol)
 
-        let bodyW = W - CGFloat(left) - 16
-        let text = NSTextField(labelWithString: "")
-        text.frame = NSRect(x: CGFloat(left), y: 10, width: bodyW, height: 22)
-        text.font = NSFont.systemFont(ofSize: 14.5, weight: .medium)
-        text.textColor = .white
-        text.lineBreakMode = .byTruncatingHead
-        text.maximumNumberOfLines = 1
-        text.cell?.truncatesLastVisibleLine = true
-        text.isHidden = true
-        glass.addSubview(text)
-        textLabel = text
-
-        let wave = WaveformView(frame: NSRect(x: CGFloat(left), y: 10, width: bodyW, height: 24))
-        glass.addSubview(wave)
-        waveform = wave
-
-        let spin = NSProgressIndicator(frame: NSRect(x: W - 34, y: 10, width: 18, height: 18))
-        spin.style = .spinning
-        spin.controlSize = .small
-        spin.isIndeterminate = true
-        spin.isHidden = true
-        spin.appearance = NSAppearance(named: .darkAqua)
-        glass.addSubview(spin)
-        progress = spin
-
-        w.contentView = glass
-        if let screen = NSScreen.main {
-            let f = screen.visibleFrame
-            w.setFrameOrigin(NSPoint(x: f.midX - W / 2, y: f.maxY - H - 18))
-        }
-        window = w
+        textLabel = label(.systemFont(ofSize: 13, weight: .regular), frame: NSRect(x: 20, y: 13, width: width - 40, height: 37))
+        textLabel.maximumNumberOfLines = 2
+        textLabel.lineBreakMode = .byTruncatingHead
+        textLabel.cell?.wraps = true
+        glass.addSubview(textLabel)
+        accentLine = NSView(frame: NSRect(x: 24, y: 0, width: width - 48, height: 2))
+        accentLine.wantsLayer = true
+        accentLine.layer?.cornerRadius = 1
+        glass.addSubview(accentLine)
+        panel.contentView = glass
+        window = panel
     }
+
+    deinit { previewTimer?.invalidate(); hideWork?.cancel() }
 }
 
-/// Rounded-bar waveform driven by the mic level; idle bars breathe gently so it never looks dead.
+/// Real microphone energy; demo motion is only used by the explicitly labelled preview.
 final class WaveformView: NSView {
-    var color: NSColor = .systemBlue { didSet { needsDisplay = true } }
-    private let barCount = 28
-    private var history: [CGFloat] = []
+    var color: NSColor = .systemMint { didSet { needsDisplay = true } }
+    private var history = Array(repeating: CGFloat(0), count: 12)
     private var timer: Timer?
     private var phase: CGFloat = 0
+    private var demo = false
 
-    override init(frame: NSRect) {
-        super.init(frame: frame)
-        history = Array(repeating: 0, count: barCount)
-    }
-    required init?(coder: NSCoder) { fatalError() }
-
-    func start() {
-        timer?.invalidate()
-        history = Array(repeating: 0, count: barCount)
-        timer = Timer(timeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in self?.tick() }
+    func start(demo: Bool = false) {
+        stop()
+        self.demo = demo
+        history = Array(repeating: 0, count: 12)
+        timer = Timer(timeInterval: 1.0 / 24.0, repeats: true) { [weak self] _ in self?.tick() }
         RunLoop.main.add(timer!, forMode: .common)
     }
-
-    func stop() {
-        timer?.invalidate()
-        timer = nil
-    }
-
+    func stop() { timer?.invalidate(); timer = nil }
     private func tick() {
-        phase += 0.18
-        let lvl = CGFloat(AudioRecorder.shared.level)
-        let idle = 0.06 + 0.04 * (1 + sin(phase))
+        phase += 0.22
+        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let level = demo ? (reduceMotion ? 0.3 : 0.18 + 0.5 * abs(sin(phase))) : CGFloat(AudioRecorder.shared.level)
         history.removeFirst()
-        history.append(max(idle, lvl))
+        history.append(max(0.09, level))
         needsDisplay = true
     }
-
     override func draw(_ dirtyRect: NSRect) {
-        let n = history.count
-        let gap: CGFloat = 3
-        let barW = (bounds.width - gap * CGFloat(n - 1)) / CGFloat(n)
-        let midY = bounds.midY
-        for (i, v) in history.enumerated() {
-            let h = max(3, v * bounds.height)
-            let x = CGFloat(i) * (barW + gap)
-            let r = NSRect(x: x, y: midY - h / 2, width: barW, height: h)
-            let age = CGFloat(i) / CGFloat(n - 1)            // older bars fade to the left
-            color.withAlphaComponent(0.25 + 0.75 * age).setFill()
-            NSBezierPath(roundedRect: r, xRadius: barW / 2, yRadius: barW / 2).fill()
+        let gap: CGFloat = 2.5
+        let barWidth = (bounds.width - gap * CGFloat(history.count - 1)) / CGFloat(history.count)
+        for (index, value) in history.enumerated() {
+            let h = max(3, min(1, value) * bounds.height)
+            color.withAlphaComponent(0.4 + 0.6 * CGFloat(index) / CGFloat(history.count - 1)).setFill()
+            let rect = NSRect(x: CGFloat(index) * (barWidth + gap), y: bounds.midY - h / 2, width: barWidth, height: h)
+            NSBezierPath(roundedRect: rect, xRadius: barWidth / 2, yRadius: barWidth / 2).fill()
         }
     }
+    deinit { stop() }
 }

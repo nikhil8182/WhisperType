@@ -10,6 +10,12 @@ Iniyal WhisperType is a lightweight menu bar app that transcribes your voice and
 
 <!-- ![WhisperType Screenshot](screenshot.png) -->
 
+## 1.3.0 interface refresh
+
+A compact glass recording panel shows live microphone activity, readable transcription, and clear finishing feedback without taking keyboard focus. Preview its stages from Settings without using the microphone. The panel respects Reduce Motion and follows the active display.
+
+Settings now groups everyday controls, speech preferences, and searchable history. History supports full-text selection and copy feedback. The menu keeps the most useful actions close, with advanced controls tucked away. Settings follows the Mac's light or dark appearance.
+
 ## 1.2.1 reliability fixes
 
 - Failed engine requests retain the WAV for CLI fallback. Auto language detection works in the fallback too.

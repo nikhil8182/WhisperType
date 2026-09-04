@@ -10,7 +10,7 @@ ENTITLEMENTS="$PROJECT_DIR/WhisperType/WhisperType.entitlements"
 INSTALL_DIR="/Applications/$APP_NAME.app"
 
 echo "╔══════════════════════════════════════╗"
-echo "║    Iniyal WhisperType Build v1.2.1   ║"
+echo "║    Iniyal WhisperType Build v1.3.0   ║"
 echo "║    by Onwords Smart Solutions        ║"
 echo "╚══════════════════════════════════════╝"
 echo ""
@@ -98,7 +98,7 @@ echo "  ✅ Build complete!"
 echo "  📍 $APP_BUNDLE"
 echo "  📏 App size: $APP_SIZE"
 echo "  📏 Binary: $BINARY_SIZE"
-echo "  📋 Version: 1.2.1 (build 4)"
+echo "  📋 Version: 1.3.0 (build 5)"
 echo "═══════════════════════════════════════"
 
 # --- Step 6: Install (optional) ---

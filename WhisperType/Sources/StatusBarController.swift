@@ -1,386 +1,181 @@
 import AppKit
-import SwiftUI
 import Combine
 import UserNotifications
 
-class StatusBarController {
-    private var statusItem: NSStatusItem
-    private var appState: AppState
+final class StatusBarController: NSObject, NSMenuDelegate {
+    private let statusItem: NSStatusItem
+    private let appState: AppState
     private var cancellables = Set<AnyCancellable>()
-    private var popover: NSPopover?
-    
+
     init(appState: AppState) {
         self.appState = appState
-        self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        
-        setupButton()
-        setupMenu()
-        observeState()
-    }
-    
-    private func setupButton() {
-        if let button = statusItem.button {
-            button.image = NSImage(systemSymbolName: "mic.fill", accessibilityDescription: "Iniyal WhisperType")
-            button.image?.isTemplate = true
-        }
-    }
-    
-    private func setupMenu() {
-        updateMenu()
-    }
-    
-    private func observeState() {
-        appState.$status
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] status in
-                self?.updateIcon(for: status)
-                self?.updateMenu()
-            }
-            .store(in: &cancellables)
-        
-        appState.$permissionState
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                self?.updateMenu()
-            }
-            .store(in: &cancellables)
-        
-        appState.$engineAvailable.combineLatest(appState.$llmAvailable)
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in self?.updateMenu() }
-            .store(in: &cancellables)
-
-        appState.$errorMessage
-            .compactMap { $0 }
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] message in
-                self?.showNotification(title: "Iniyal WhisperType", body: message)
-            }
-            .store(in: &cancellables)
-    }
-    
-    private func updateIcon(for status: AppStatus) {
-        guard let button = statusItem.button else { return }
-        
-        switch status {
-        case .idle:
-            button.image = NSImage(systemSymbolName: "mic.fill", accessibilityDescription: "Iniyal WhisperType - Idle")
-            button.image?.isTemplate = true
-            button.contentTintColor = nil
-        case .recording:
-            button.image = NSImage(systemSymbolName: "mic.circle.fill", accessibilityDescription: "Iniyal WhisperType - Recording")
-            button.image?.isTemplate = false
-            button.contentTintColor = .systemRed
-        case .transcribing:
-            button.image = NSImage(systemSymbolName: "ellipsis.circle.fill", accessibilityDescription: "Iniyal WhisperType - Transcribing")
-            button.image?.isTemplate = false
-            button.contentTintColor = .systemOrange
-        }
-    }
-    
-    private func updateMenu() {
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        super.init()
         let menu = NSMenu()
-        
-        // Permission status indicator
-        let permItem = NSMenuItem(title: appState.permissionState.rawValue, action: nil, keyEquivalent: "")
-        permItem.isEnabled = false
-        menu.addItem(permItem)
-        
-        // Show missing permissions detail
-        if appState.permissionState != .ready {
-            if !appState.hasMicPermission {
-                let micItem = NSMenuItem(title: "  ⚠️ Microphone: Not Granted", action: nil, keyEquivalent: "")
-                micItem.isEnabled = false
-                menu.addItem(micItem)
-            }
-            if !appState.hasAccessibilityPermission {
-                let axItem = NSMenuItem(title: "  ⚠️ Accessibility: Not Granted", action: #selector(openAccessibilitySettings), keyEquivalent: "")
-                axItem.target = self
-                menu.addItem(axItem)
-            }
-            if !appState.hasWhisperCLI {
-                let whisperItem = NSMenuItem(title: "  ⚠️ Whisper CLI: Not Found", action: nil, keyEquivalent: "")
-                whisperItem.isEnabled = false
-                menu.addItem(whisperItem)
-            }
-            if !appState.hasFfmpeg {
-                let ffmpegItem = NSMenuItem(title: "  ⚠️ ffmpeg: Not Found", action: nil, keyEquivalent: "")
-                ffmpegItem.isEnabled = false
-                menu.addItem(ffmpegItem)
-            }
-            
-            let fixItem = NSMenuItem(title: "Request Accessibility Access…", action: #selector(openAccessibilitySettings), keyEquivalent: "")
-            fixItem.target = self
-            menu.addItem(fixItem)
-        }
-        
-        menu.addItem(NSMenuItem.separator())
-        
-        // App Status
-        let statusItem = NSMenuItem(title: appState.status.rawValue, action: nil, keyEquivalent: "")
-        statusItem.isEnabled = false
-        menu.addItem(statusItem)
-        
-        // Last transcription preview
-        if let lastEntry = appState.history.first {
-            let preview = String(lastEntry.text.prefix(45)) + (lastEntry.text.count > 45 ? "…" : "")
-            let lastItem = NSMenuItem(title: "Last: \(preview)", action: #selector(copyLastTranscription), keyEquivalent: "")
-            lastItem.target = self
-            lastItem.toolTip = "Click to copy: \(lastEntry.text)"
-            menu.addItem(lastItem)
-        }
-        
-        menu.addItem(NSMenuItem.separator())
-        
-        // Recent transcriptions
-        let historyMenu = NSMenu()
-        if appState.history.isEmpty {
-            let emptyItem = NSMenuItem(title: "No transcriptions yet", action: nil, keyEquivalent: "")
-            emptyItem.isEnabled = false
-            historyMenu.addItem(emptyItem)
-        } else {
-            for (i, entry) in appState.history.prefix(10).enumerated() {
-                let preview = String(entry.text.prefix(60)) + (entry.text.count > 60 ? "..." : "")
-                let item = NSMenuItem(title: preview, action: #selector(copyHistoryItem(_:)), keyEquivalent: "")
-                item.target = self
-                item.tag = i
-                item.toolTip = entry.text
-                historyMenu.addItem(item)
-            }
-            historyMenu.addItem(NSMenuItem.separator())
-            let clearItem = NSMenuItem(title: "Clear History", action: #selector(clearHistory), keyEquivalent: "")
-            clearItem.target = self
-            historyMenu.addItem(clearItem)
-        }
-        
-        let historyMenuItem = NSMenuItem(title: "Recent Transcriptions", action: nil, keyEquivalent: "")
-        historyMenuItem.submenu = historyMenu
-        menu.addItem(historyMenuItem)
-        
-        menu.addItem(NSMenuItem.separator())
-        
-        // Model selection
-        let modelMenu = NSMenu()
-        for model in ["tiny", "base", "small", "medium", "turbo"] {
-            let item = NSMenuItem(title: model, action: #selector(selectModel(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = model
-            if model == appState.whisperModel {
-                item.state = .on
-            }
-            modelMenu.addItem(item)
-        }
-        let modelMenuItem = NSMenuItem(title: "Model: \(appState.whisperModel)", action: nil, keyEquivalent: "")
-        modelMenuItem.submenu = modelMenu
-        menu.addItem(modelMenuItem)
-        
-        // Engine status + smart cleanup
-        let engineTitle = appState.engineAvailable
-            ? "Engine: turbo ✓" + (appState.llmAvailable ? "  ·  cleanup ✓" : "  ·  cleanup off (Ollama down)")
-            : (EngineClient.isInstalled ? "Engine: starting…" : "Engine: not installed (CLI fallback)")
-        let engineItem = NSMenuItem(title: engineTitle, action: nil, keyEquivalent: "")
-        engineItem.isEnabled = false
-        menu.addItem(engineItem)
-
-        let cleanupItem = NSMenuItem(title: "Smart Cleanup (local LLM)", action: #selector(toggleCleanup), keyEquivalent: "")
-        cleanupItem.target = self
-        cleanupItem.state = appState.smartCleanup ? .on : .off
-        menu.addItem(cleanupItem)
-
-        let previewItem = NSMenuItem(title: "Live Preview While Recording", action: #selector(togglePreview), keyEquivalent: "")
-        previewItem.target = self
-        previewItem.state = appState.livePreview ? .on : .off
-        menu.addItem(previewItem)
-
-        let styleMenu = NSMenu()
-        for (tag, title) in [("auto", "Auto (by app)"), ("casual", "Casual chat"), ("formal", "Formal / email"), ("prompt", "AI prompt"), ("literal", "Literal"), ("neutral", "Neutral cleanup")] {
-            let it = NSMenuItem(title: title, action: #selector(selectStyle(_:)), keyEquivalent: "")
-            it.target = self
-            it.representedObject = tag
-            if tag == appState.styleOverride { it.state = .on }
-            styleMenu.addItem(it)
-        }
-        let styleItem = NSMenuItem(title: "Cleanup Style", action: nil, keyEquivalent: "")
-        styleItem.submenu = styleMenu
-        menu.addItem(styleItem)
-
-        let vocabItem = NSMenuItem(title: "Edit Vocabulary…", action: #selector(editVocabulary), keyEquivalent: "")
-        vocabItem.target = self
-        menu.addItem(vocabItem)
-
-        let appsItem = NSMenuItem(title: "Edit App Styles…", action: #selector(editAppStyles), keyEquivalent: "")
-        appsItem.target = self
-        menu.addItem(appsItem)
-
-        menu.addItem(NSMenuItem.separator())
-
-        // Overlay toggle
-        let overlayItem = NSMenuItem(title: "Show Overlay", action: #selector(toggleOverlay), keyEquivalent: "")
-        overlayItem.target = self
-        overlayItem.state = appState.showFloatingOverlay ? .on : .off
-        menu.addItem(overlayItem)
-        
-        // Sound toggle
-        let soundItem = NSMenuItem(title: "Sound Effects", action: #selector(toggleSounds), keyEquivalent: "")
-        soundItem.target = self
-        soundItem.state = appState.playSounds ? .on : .off
-        menu.addItem(soundItem)
-        
-        menu.addItem(NSMenuItem.separator())
-        
-        // Setup Wizard
-        let wizardItem = NSMenuItem(title: "Setup Wizard…", action: #selector(showSetupWizard), keyEquivalent: "")
-        wizardItem.target = self
-        menu.addItem(wizardItem)
-        
-        // Check Dependencies
-        let depsItem = NSMenuItem(title: "Check Dependencies…", action: #selector(checkDependencies), keyEquivalent: "d")
-        depsItem.target = self
-        menu.addItem(depsItem)
-        
-        // Refresh permissions
-        let refreshItem = NSMenuItem(title: "Refresh Permissions", action: #selector(refreshPermissions), keyEquivalent: "r")
-        refreshItem.target = self
-        menu.addItem(refreshItem)
-        
-        // Settings
-        let settingsItem = NSMenuItem(title: "Settings...", action: #selector(openSettings), keyEquivalent: ",")
-        settingsItem.target = self
-        menu.addItem(settingsItem)
-        
-        // About
-        let aboutItem = NSMenuItem(title: "About Iniyal WhisperType", action: #selector(showAbout), keyEquivalent: "")
-        aboutItem.target = self
-        menu.addItem(aboutItem)
-        
-        menu.addItem(NSMenuItem.separator())
-        
-        // Quit
-        let quitItem = NSMenuItem(title: "Quit Iniyal WhisperType", action: #selector(quit), keyEquivalent: "q")
-        quitItem.target = self
-        menu.addItem(quitItem)
-        
-        self.statusItem.menu = menu
+        menu.delegate = self
+        statusItem.menu = menu
+        appState.$status.receive(on: DispatchQueue.main).sink { [weak self] status in
+            self?.updateIcon(status)
+        }.store(in: &cancellables)
+        appState.$errorMessage.compactMap { $0 }.receive(on: DispatchQueue.main).sink { [weak self] message in
+            self?.notify(title: "Iniyal WhisperType", body: message)
+        }.store(in: &cancellables)
     }
-    
-    @objc private func copyHistoryItem(_ sender: NSMenuItem) {
-        let index = sender.tag
-        guard index < appState.history.count else { return }
-        let text = appState.history[index].text
+
+    private func updateIcon(_ status: AppStatus) {
+        guard let button = statusItem.button else { return }
+        let symbol: String
+        switch status {
+        case .idle: symbol = "waveform"
+        case .recording: symbol = "waveform.circle.fill"
+        case .transcribing: symbol = "ellipsis.circle"
+        }
+        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Iniyal WhisperType: \(status.rawValue)")
+        button.image?.isTemplate = status != .recording
+        button.contentTintColor = status == .recording ? .systemGreen : nil
+        button.toolTip = status == .idle ? "Iniyal WhisperType · Hold Option to speak" : status.rawValue
+    }
+
+    // Build on opening, so settings and history are always current without replacing a tracked menu.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        let header = NSMenuItem()
+        header.view = makeHeader()
+        menu.addItem(header)
+        menu.addItem(.separator())
+        if appState.permissionState != .ready {
+            add("Review permissions…", "exclamationmark.circle", #selector(openSettings), to: menu)
+        }
+        let copy = add("Copy last dictation", "doc.on.doc", #selector(copyLast), to: menu)
+        copy.isEnabled = !appState.history.isEmpty
+        let recent = NSMenu()
+        if appState.history.isEmpty {
+            let empty = NSMenuItem(title: "Your words will appear here", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            recent.addItem(empty)
+        } else {
+            for entry in appState.history.prefix(7) {
+                let plain = entry.text.replacingOccurrences(of: "\n", with: " ")
+                let title = String(plain.prefix(36)) + (plain.count > 36 ? "…" : "")
+                let item = add(title, nil, #selector(copyEntry(_:)), to: recent)
+                item.representedObject = entry.text
+                item.toolTip = "Click to copy this dictation"
+            }
+        }
+        recent.addItem(.separator())
+        add("Open history…", "clock", #selector(openHistory), to: recent)
+        addSubmenu("Recent dictations", "clock", recent, to: menu)
+        menu.addItem(.separator())
+        add("Preview recording panel", "rectangle.bottomthird.inset.filled", #selector(preview), to: menu)
+
+        let preferences = NSMenu()
+        toggle("Smart cleanup", appState.smartCleanup, #selector(toggleCleanup), in: preferences)
+        toggle("Live transcript", appState.livePreview, #selector(togglePreview), in: preferences)
+        toggle("Recording panel", appState.showFloatingOverlay, #selector(toggleOverlay), in: preferences)
+        toggle("Sound effects", appState.playSounds, #selector(toggleSounds), in: preferences)
+        addSubmenu("Quick controls", "slider.horizontal.3", preferences, to: menu)
+        menu.addItem(.separator())
+        let settings = add("Settings…", "gearshape", #selector(openSettings), to: menu)
+        settings.keyEquivalent = ","
+        let help = NSMenu()
+        let status = NSMenuItem(title: appState.engineAvailable ? "Local speech engine ready" : "Local speech engine unavailable", action: nil, keyEquivalent: "")
+        status.isEnabled = false
+        help.addItem(status)
+        add("Refresh permissions", "arrow.clockwise", #selector(refreshPermissions), to: help)
+        add("Check dependencies…", "wrench.and.screwdriver", #selector(checkDependencies), to: help)
+        add("About Iniyal WhisperType", "info.circle", #selector(showAbout), to: help)
+        addSubmenu("Help", "questionmark.circle", help, to: menu)
+        menu.addItem(.separator())
+        let quit = add("Quit Iniyal WhisperType", nil, #selector(quit), to: menu)
+        quit.keyEquivalent = "q"
+    }
+
+    @discardableResult
+    private func add(_ title: String, _ symbol: String?, _ action: Selector, to menu: NSMenu) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+        item.target = self
+        if let symbol { item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) }
+        menu.addItem(item)
+        return item
+    }
+    private func addSubmenu(_ title: String, _ symbol: String, _ child: NSMenu, to menu: NSMenu) {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        item.submenu = child
+        menu.addItem(item)
+    }
+    private func toggle(_ title: String, _ enabled: Bool, _ action: Selector, in menu: NSMenu) {
+        add(title, nil, action, to: menu).state = enabled ? .on : .off
+    }
+
+    private func makeHeader() -> NSView {
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 290, height: 96))
+        let avatar = NSImageView(frame: NSRect(x: 18, y: 40, width: 38, height: 38))
+        avatar.wantsLayer = true
+        avatar.layer?.cornerRadius = 19
+        avatar.layer?.masksToBounds = true
+        avatar.imageScaling = .scaleProportionallyUpOrDown
+        if let path = Bundle.main.path(forResource: "iniyal_face", ofType: "png") { avatar.image = NSImage(contentsOfFile: path) }
+        view.addSubview(avatar)
+        let title = NSTextField(labelWithString: "Iniyal WhisperType")
+        title.font = .systemFont(ofSize: 15, weight: .semibold)
+        title.frame = NSRect(x: 67, y: 60, width: 210, height: 21)
+        view.addSubview(title)
+        let ready = appState.permissionState == .ready
+        let state = NSTextField(labelWithString: appState.status == .idle ? (ready ? "Ready when you are" : "A little setup needed") : appState.status.rawValue)
+        state.font = .systemFont(ofSize: 12)
+        state.textColor = ready ? .secondaryLabelColor : .systemOrange
+        state.frame = NSRect(x: 67, y: 41, width: 210, height: 18)
+        view.addSubview(state)
+        let key = appState.hotkeyKeyCode == 58 ? "Left Option" : "Right Option"
+        let hint = NSTextField(labelWithString: "Hold \(key) to speak · release to paste")
+        hint.font = .systemFont(ofSize: 11)
+        hint.textColor = .secondaryLabelColor
+        hint.frame = NSRect(x: 18, y: 11, width: 260, height: 17)
+        view.addSubview(hint)
+        return view
+    }
+
+    @objc private func copyEntry(_ sender: NSMenuItem) {
+        guard let text = sender.representedObject as? String else { return }
+        copy(text)
+    }
+    @objc private func copyLast() { if let text = appState.history.first?.text { copy(text) } }
+    private func copy(_ text: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
-        showNotification(title: "Copied", body: String(text.prefix(50)))
+        notify(title: "Copied", body: "Your dictation is ready to paste.")
     }
-    
-    @objc private func copyLastTranscription() {
-        guard let lastEntry = appState.history.first else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(lastEntry.text, forType: .string)
-        showNotification(title: "Copied", body: String(lastEntry.text.prefix(50)))
+    @objc private func toggleCleanup() { appState.smartCleanup.toggle() }
+    @objc private func togglePreview() { appState.livePreview.toggle() }
+    @objc private func toggleOverlay() { appState.showFloatingOverlay.toggle() }
+    @objc private func toggleSounds() { appState.playSounds.toggle() }
+    @objc private func preview() { NotificationCenter.default.post(name: .init("WhisperTypePreviewOverlay"), object: nil) }
+    @objc private func openHistory() {
+        UserDefaults.standard.set(2, forKey: "settingsSelectedTab")
+        openSettings()
     }
-    
-    @objc private func clearHistory() {
-        appState.clearHistory()
-    }
-    
-    @objc private func selectModel(_ sender: NSMenuItem) {
-        if let model = sender.representedObject as? String {
-            appState.whisperModel = model
-        }
-    }
-    
-    @objc private func toggleCleanup() { appState.smartCleanup.toggle(); updateMenu() }
-    @objc private func togglePreview() { appState.livePreview.toggle(); updateMenu() }
-    @objc private func selectStyle(_ sender: NSMenuItem) {
-        if let s = sender.representedObject as? String { appState.styleOverride = s; updateMenu() }
-    }
-    @objc private func editVocabulary() { openConfig("vocabulary.json") }
-    @objc private func editAppStyles() { openConfig("apps.json") }
-    private func openConfig(_ name: String) {
-        let url = EngineClient.configDir.appendingPathComponent(name)
-        if !FileManager.default.fileExists(atPath: url.path) {
-            showNotification(title: "Iniyal WhisperType", body: "\(name) appears after the engine's first start.")
-            return
-        }
-        NSWorkspace.shared.open(url)
-    }
-
-    @objc private func toggleOverlay() {
-        appState.showFloatingOverlay.toggle()
-    }
-    
-    @objc private func toggleSounds() {
-        appState.playSounds.toggle()
-    }
-    
-    @objc private func openAccessibilitySettings() {
-        TextPaster.openAccessibilitySettings()
-    }
-    
-    @objc private func showSetupWizard() {
-        // Show onboarding as a re-runnable setup wizard
-        NSApp.setActivationPolicy(.regular)
-        OnboardingWindowController.shared.show(forceShow: true)
-        
-        // Re-hide dock icon when window closes
-        NotificationCenter.default.addObserver(
-            forName: NSWindow.willCloseNotification,
-            object: nil,
-            queue: .main
-        ) { _ in
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-                NSApp.setActivationPolicy(.accessory)
-            }
-        }
-    }
-    
-    @objc private func checkDependencies() {
-        // Access the AppDelegate to trigger setup window
-        if let appDelegate = NSApp.delegate as? AppDelegate {
-            appDelegate.showDependencySetup()
-        }
-    }
-    
-    @objc private func refreshPermissions() {
-        appState.refreshPermissions()
-        showNotification(title: "Iniyal WhisperType", body: "Permissions refreshed: \(appState.permissionState.rawValue)")
-    }
-    
     @objc private func openSettings() {
         NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
         NSApp.activate(ignoringOtherApps: true)
     }
-    
+    @objc private func refreshPermissions() { appState.refreshPermissions() }
+    @objc private func checkDependencies() { (NSApp.delegate as? AppDelegate)?.showDependencySetup() }
     @objc private func showAbout() {
-        let credits = NSAttributedString(
-            string: "Iniyal, the Onwords AI, types what you say.\nby Onwords Smart Solutions · onwords.in",
-            attributes: [
-                .font: NSFont.systemFont(ofSize: 11),
-                .foregroundColor: NSColor.secondaryLabelColor
-            ]
-        )
-        
-        let options: [NSApplication.AboutPanelOptionKey: Any] = [
-            .applicationName: "Iniyal WhisperType",
-            .applicationVersion: "1.2.0",
-            .version: "3",
-            .credits: credits,
-            .applicationIcon: NSApp.applicationIconImage as Any
-        ]
-        
+        let info = Bundle.main.infoDictionary ?? [:]
         NSApp.activate(ignoringOtherApps: true)
-        NSApp.orderFrontStandardAboutPanel(options: options)
+        NSApp.orderFrontStandardAboutPanel(options: [
+            .applicationName: "Iniyal WhisperType",
+            .applicationVersion: info["CFBundleShortVersionString"] as? String ?? "",
+            .version: info["CFBundleVersion"] as? String ?? "",
+            .credits: NSAttributedString(string: "Your voice. Your words. On your Mac.\nMade by Onwords.")
+        ])
     }
-    
-    @objc private func quit() {
-        NSApp.terminate(nil)
-    }
-    
-    private func showNotification(title: String, body: String) {
+    @objc private func quit() { NSApp.terminate(nil) }
+    private func notify(title: String, body: String) {
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
-        let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
-        UNUserNotificationCenter.current().add(request)
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
     }
 }

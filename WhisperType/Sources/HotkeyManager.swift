@@ -11,6 +11,7 @@ class HotkeyManager {
     private var appState: AppState?
     private var flagsMonitor: Any?
     private var localFlagsMonitor: Any?
+    private var previewObserver: NSObjectProtocol?
     private var overlayWindow: OverlayWindowController?
 
     // Recording state is confined to the main thread.
@@ -38,6 +39,11 @@ class HotkeyManager {
 
     func setup(appState: AppState) {
         self.appState = appState
+        previewObserver = NotificationCenter.default.addObserver(forName: .init("WhisperTypePreviewOverlay"), object: nil, queue: .main) { [weak self] _ in
+            guard let self, !self.isRecording, !self.isProcessing else { return }
+            if self.overlayWindow == nil { self.overlayWindow = OverlayWindowController() }
+            self.overlayWindow?.preview()
+        }
         flagsMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.flagsChanged]) { [weak self] event in
             self?.handleFlagsChanged(event)
         }
@@ -113,6 +119,8 @@ class HotkeyManager {
             OnboardingWindowController.shared.close()
             NSApp.setActivationPolicy(.accessory)
         }
+
+        overlayWindow?.cancelPreview()
 
         // Snapshot the target app BEFORE any UI of ours appears
         frontApp = EngineClient.captureFrontApp()
@@ -245,8 +253,11 @@ class HotkeyManager {
             }
             self.consecutiveFailures = 0
             appState.addToHistory(TranscriptionEntry(text: text, duration: duration, model: label))
-            self.hideOverlay()
-            TextPaster.shared.pasteText(text, targetPID: target.pid)
+            TextPaster.shared.pasteText(text, targetPID: target.pid) { [weak self] delivered in
+                guard let self else { return }
+                self.showOverlay(text: delivered ? text : "Copy your dictation from History to paste it where you need it.", kind: delivered ? .ready : .attention)
+                self.overlayWindow?.hide(after: delivered ? 1.0 : 3.0)
+            }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
                 self.resetState()
                 appState.setStatus(.idle)
@@ -283,8 +294,8 @@ class HotkeyManager {
                 guard self.isRecording else { return }
                 if case .success(let t) = result, !t.text.isEmpty {
                     self.lastPartialText = t.text
-                    let tail = String(t.text.suffix(60))
-                    self.showOverlay(text: (t.text.count > 60 ? "…" : "") + tail,
+                    let tail = String(t.text.suffix(140))
+                    self.showOverlay(text: (t.text.count > 140 ? "…" : "") + tail,
                                      kind: self.handsFree ? .handsFree : .recording)
                 }
             }
@@ -310,7 +321,8 @@ class HotkeyManager {
         DispatchQueue.main.async {
             self.appState?.setStatus(.idle)
             self.appState?.showError(message)
-            self.hideOverlay()
+            self.showOverlay(text: message, kind: .error)
+            self.overlayWindow?.hide(after: 4.0)
         }
     }
 
@@ -326,6 +338,10 @@ class HotkeyManager {
 
     private func showOverlay(text: String, kind: OverlayWindowController.Kind) {
         assert(Thread.isMainThread)
+        guard appState?.showFloatingOverlay == true else {
+            overlayWindow?.hide(after: 0)
+            return
+        }
         if overlayWindow == nil { overlayWindow = OverlayWindowController() }
         overlayWindow?.show(text: text, kind: kind)
     }
@@ -336,6 +352,7 @@ class HotkeyManager {
     }
 
     deinit {
+        if let previewObserver { NotificationCenter.default.removeObserver(previewObserver) }
         if let monitor = flagsMonitor { NSEvent.removeMonitor(monitor) }
         if let monitor = localFlagsMonitor { NSEvent.removeMonitor(monitor) }
     }

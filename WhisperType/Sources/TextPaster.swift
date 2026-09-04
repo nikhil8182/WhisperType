@@ -47,8 +47,8 @@ class TextPaster {
         return true
     }
 
-    func pasteText(_ text: String, targetPID: pid_t?) {
-        guard !text.isEmpty else { return }
+    func pasteText(_ text: String, targetPID: pid_t?, completion: @escaping (Bool) -> Void = { _ in }) {
+        guard !text.isEmpty else { completion(false); return }
         let pasteboard = NSPasteboard.general
         let previousContents = Self.snapshot(pasteboard)
         pasteboard.clearContents()
@@ -58,14 +58,17 @@ class TextPaster {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
             guard pasteboard.changeCount == writtenCount else {
                 AppState.shared.showError("Clipboard changed before paste. Dictation is saved in History.")
+                completion(false)
                 return
             }
             guard let targetPID = targetPID,
                   NSWorkspace.shared.frontmostApplication?.processIdentifier == targetPID else {
                 AppState.shared.showError("Active app changed. Dictation is on the clipboard and in History.")
+                completion(false)
                 return
             }
             if self.performPaste() {
+                completion(true)
                 // Posting a key event is not proof that the target consumed it. History
                 // remains the recovery path; never overwrite something copied since then.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
@@ -73,6 +76,7 @@ class TextPaster {
                 }
             } else {
                 AppState.shared.showError("Could not paste. Dictation is on the clipboard and in History.")
+                completion(false)
             }
         }
     }
