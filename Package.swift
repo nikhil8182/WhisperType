@@ -16,6 +16,7 @@ let package = Package(
                 .linkedFramework("Carbon"),
                 .linkedFramework("ServiceManagement")
             ]
-        )
+        ),
+        .testTarget(name: "WhisperTypeTests", dependencies: ["WhisperType"], path: "Tests")
     ]
 )

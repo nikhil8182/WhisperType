@@ -1,0 +1,10 @@
+version = 1
+name = "Iniyal WhisperType"
+
+[setup]
+script = ""
+
+[[actions]]
+name = "Run"
+icon = "run"
+command = "./build-app.sh --install"

@@ -24,42 +24,66 @@ class TextPaster {
         }
     }
     
-    func pasteText(_ text: String) {
-        logInfo("TextPaster", "Pasting text (\(text.count) chars): \(text.prefix(50))...")
-        
+    // Copy every representation; NSPasteboardItem instances cannot be reused after a clear.
+    static func snapshot(_ pasteboard: NSPasteboard) -> [[NSPasteboard.PasteboardType: Data]] {
+        (pasteboard.pasteboardItems ?? []).map { item in
+            var values: [NSPasteboard.PasteboardType: Data] = [:]
+            for type in item.types { values[type] = item.data(forType: type) }
+            return values
+        }
+    }
+
+    @discardableResult
+    static func restore(_ contents: [[NSPasteboard.PasteboardType: Data]],
+                        to pasteboard: NSPasteboard, ifUnchanged expectedCount: Int) -> Bool {
+        guard pasteboard.changeCount == expectedCount else { return false }
+        let items = contents.map { values -> NSPasteboardItem in
+            let item = NSPasteboardItem()
+            for (type, data) in values { item.setData(data, forType: type) }
+            return item
+        }
+        pasteboard.clearContents()
+        if !items.isEmpty { pasteboard.writeObjects(items) }
+        return true
+    }
+
+    func pasteText(_ text: String, targetPID: pid_t?) {
+        guard !text.isEmpty else { return }
         let pasteboard = NSPasteboard.general
-        let previousContents = pasteboard.string(forType: .string)
-        
+        let previousContents = Self.snapshot(pasteboard)
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
-        
-        // Increased delay to 200ms before paste
+        let writtenCount = pasteboard.changeCount
+
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-            let success = self.performPaste()
-            
-            if success {
-                logInfo("TextPaster", "Paste succeeded — restoring clipboard in 2s")
-                // Only restore clipboard if paste succeeded
+            guard pasteboard.changeCount == writtenCount else {
+                AppState.shared.showError("Clipboard changed before paste. Dictation is saved in History.")
+                return
+            }
+            guard let targetPID = targetPID,
+                  NSWorkspace.shared.frontmostApplication?.processIdentifier == targetPID else {
+                AppState.shared.showError("Active app changed. Dictation is on the clipboard and in History.")
+                return
+            }
+            if self.performPaste() {
+                // Posting a key event is not proof that the target consumed it. History
+                // remains the recovery path; never overwrite something copied since then.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                    if let previous = previousContents {
-                        pasteboard.clearContents()
-                        pasteboard.setString(previous, forType: .string)
-                        logDebug("TextPaster", "Clipboard restored")
-                    }
+                    Self.restore(previousContents, to: pasteboard, ifUnchanged: writtenCount)
                 }
             } else {
-                logError("TextPaster", "All paste methods failed — leaving text on clipboard for manual Cmd+V")
+                AppState.shared.showError("Could not paste. Dictation is on the clipboard and in History.")
             }
         }
     }
-    
+
     /// Try paste methods in order: CGEvent → AppleScript → notify user
     /// Returns true if any method succeeded
     private func performPaste() -> Bool {
         // Method 1: CGEvent (fastest, requires Accessibility)
         if Self.isAccessibilityGranted {
             if pasteViaCGEvent() {
-                logInfo("TextPaster", "✅ Paste succeeded via CGEvent")
+                logInfo("TextPaster", "Paste shortcut posted via CGEvent")
                 return true
             }
             logWarn("TextPaster", "CGEvent paste failed, trying AppleScript...")
@@ -69,7 +93,7 @@ class TextPaster {
         
         // Method 2: AppleScript
         if pasteViaAppleScript() {
-            logInfo("TextPaster", "✅ Paste succeeded via AppleScript")
+            logInfo("TextPaster", "Paste shortcut posted via AppleScript")
             return true
         }
         logWarn("TextPaster", "AppleScript paste failed, trying pbpaste fallback...")

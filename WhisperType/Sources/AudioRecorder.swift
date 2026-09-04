@@ -18,7 +18,11 @@ class AudioRecorder: NSObject {
     private let lock = NSLock()
 
     /// Smoothed mic level 0...1 for the overlay waveform (written from the audio thread)
-    private(set) var level: Float = 0
+    private var currentLevel: Float = 0
+    var level: Float {
+        lock.lock(); defer { lock.unlock() }
+        return currentLevel
+    }
 
     private override init() {
         super.init()
@@ -43,12 +47,13 @@ class AudioRecorder: NSObject {
         return pcm16k
     }
 
-    func startRecording() {
+    @discardableResult
+    func startRecording() -> Bool {
         lock.lock()
         guard !isCurrentlyRecording else {
             logWarn("AudioRecorder", "Already recording, ignoring startRecording")
             lock.unlock()
-            return
+            return false
         }
         lock.unlock()
 
@@ -69,7 +74,7 @@ class AudioRecorder: NSObject {
 
             guard recordingFormat.sampleRate > 0 && recordingFormat.channelCount > 0 else {
                 logError("AudioRecorder", "Invalid input format — no audio input device?")
-                return
+                return false
             }
 
             // Record in NATIVE format — no conversion, no crashes
@@ -89,10 +94,10 @@ class AudioRecorder: NSObject {
                 guard let self = self else { return }
 
                 self.lock.lock()
+                defer { self.lock.unlock() }
                 let recording = self.isCurrentlyRecording
                 let file = self.audioFile
                 let conv = self.converter
-                self.lock.unlock()
 
                 guard recording, let file = file else { return }
 
@@ -103,7 +108,7 @@ class AudioRecorder: NSObject {
                     for i in 0..<n { sum += ch[i] * ch[i] }
                     let rms = sqrtf(sum / Float(n))
                     let target = min(1, rms * 9)
-                    self.level = target > self.level ? target : self.level * 0.85 + target * 0.15
+                    self.currentLevel = target > self.currentLevel ? target : self.currentLevel * 0.85 + target * 0.15
                 }
 
                 do {
@@ -126,9 +131,7 @@ class AudioRecorder: NSObject {
                 }
                 if status != .error, out.frameLength > 0, let ch = out.floatChannelData {
                     let bytes = Data(bytes: ch[0], count: Int(out.frameLength) * MemoryLayout<Float>.size)
-                    self.lock.lock()
                     self.pcm16k.append(bytes)
-                    self.lock.unlock()
                 } else if let e = convError {
                     logWarn("AudioRecorder", "convert error: \(e.localizedDescription)")
                 }
@@ -142,6 +145,7 @@ class AudioRecorder: NSObject {
             lock.unlock()
 
             logInfo("AudioRecorder", "Recording started successfully")
+            return true
 
         } catch {
             logError("AudioRecorder", "Failed to start recording: \(error)")
@@ -153,6 +157,8 @@ class AudioRecorder: NSObject {
             currentURL = nil
             converter = nil
             lock.unlock()
+            try? FileManager.default.removeItem(at: url)
+            return false
         }
     }
 
@@ -167,7 +173,7 @@ class AudioRecorder: NSObject {
         }
 
         isCurrentlyRecording = false
-        level = 0
+        currentLevel = 0
         let url = currentURL
         let pcm = pcm16k
         audioFile = nil

@@ -19,6 +19,7 @@ import sys
 import time
 import threading
 import urllib.request
+from collections import Counter
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import numpy as np
@@ -202,7 +203,8 @@ class Speech:
 
 def apply_replacements(text):
     for rx, v in CONFIG.replacements:
-        text = rx.sub(v, text)
+        # User vocabulary values are literal text, not regex replacement syntax.
+        text = rx.sub(lambda match: v, text)
     return text
 
 
@@ -214,11 +216,12 @@ VOICE_CMDS = [
 
 
 def voice_commands(text):
+    text = text.strip()
     if re.search(r"\bscratch that\b", text, re.I):
         text = re.split(r"\bscratch that\b[,.]?\s*", text, flags=re.I)[-1]
     for rx, rep in VOICE_CMDS:
         text = rx.sub(rep, text)
-    return text.strip()
+    return text
 
 
 def pick_style(app_bundle, app_name, window_title, override):
@@ -259,7 +262,10 @@ def ollama_chat(system, user, timeout):
     req = urllib.request.Request(CONFIG.cfg["ollama_url"] + "/api/chat", data=body,
                                  headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=timeout) as r:
-        out = json.load(r)["message"]["content"]
+        result = json.load(r)
+    if result.get("done_reason") == "length":
+        raise ValueError("cleanup exceeded its output limit")
+    out = result["message"]["content"]
     out = re.sub(r"<think>.*?</think>", "", out, flags=re.S).strip()
     return out
 
@@ -269,7 +275,10 @@ def sanity(raw, out):
     if not out:
         return False
     rw, ow = len(raw.split()), len(out.split())
-    if ow > rw * 2.5 + 8:
+    if ow > rw * 2.5 + 8 or ow < rw * 0.6:
+        return False
+    # Cleanup must not silently change amounts, dates, IDs or measurements.
+    if Counter(re.findall(r"\d+(?:[.,]\d+)*", raw)) != Counter(re.findall(r"\d+(?:[.,]\d+)*", out)):
         return False
     low = out.lower()
     if low.startswith(("sure", "here is", "here's", "certainly")):
@@ -290,13 +299,14 @@ def warm_llm():
 
 
 def polish(text, app_bundle, app_name, window_title, override):
-    raw = text
     text = voice_commands(apply_replacements(text))
     style = pick_style(app_bundle, app_name, window_title, override)
     words = len(text.split())
-    if words < CONFIG.cfg["min_words_for_llm"] or style in (CONFIG.cfg.get("no_llm_styles") or []):
-        t = text.strip()
-        return (t[:1].upper() + t[1:]) if t else t, style, False
+    if (words < CONFIG.cfg["min_words_for_llm"]
+            or style in (CONFIG.cfg.get("no_llm_styles") or [])
+            or text != text.strip()):
+        # Preserve case-sensitive commands and explicit leading/trailing newlines.
+        return text, style, False
     if not ollama_alive():
         return text, style, False
     system = STYLE_PROMPTS.get(style, STYLE_PROMPTS["neutral"]) + COMMON_RULES

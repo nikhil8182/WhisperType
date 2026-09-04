@@ -11,9 +11,9 @@ class WhisperManager {
     
     private static let whisperTimeout: TimeInterval = 60.0
     
-    private init() {
-        self.whisperPath = DependencyManager.shared.findWhisperBinary() ?? "whisper"
-        logInfo("WhisperManager", "Initialized. Whisper path: \(whisperPath)")
+    init(whisperPath: String? = nil) {
+        self.whisperPath = whisperPath ?? DependencyManager.shared.findWhisperBinary() ?? "whisper"
+        logInfo("WhisperManager", "Initialized. Whisper path: \(self.whisperPath)")
     }
     
     /// Re-resolve the whisper binary path (e.g., after dependency install)
@@ -73,14 +73,16 @@ class WhisperManager {
             process.arguments = [
                 audioURL.path,
                 "--model", model,
-                "--language", language,
                 "--output_format", "txt",
                 "--output_dir", outputDir.path,
                 "--fp16", "False",
                 "--verbose", "False"
             ]
+            if !language.isEmpty && language != "auto" {
+                process.arguments! += ["--language", language]
+            }
             process.environment = self.makeEnv()
-            
+
             // Use separate pipes for stdout and stderr, read via data collection
             let stdoutPipe = Pipe()
             let stderrPipe = Pipe()

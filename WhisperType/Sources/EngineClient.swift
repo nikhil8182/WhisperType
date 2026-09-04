@@ -27,11 +27,11 @@ final class EngineClient {
         FileManager.default.isExecutableFile(atPath: engineDir.appendingPathComponent(".venv/bin/python").path)
     }
 
-    private init() {
+    init(session: URLSession? = nil) {
         let cfg = URLSessionConfiguration.ephemeral
         cfg.timeoutIntervalForRequest = 90
         cfg.timeoutIntervalForResource = 120
-        session = URLSession(configuration: cfg)
+        self.session = session ?? URLSession(configuration: cfg)
     }
 
     // MARK: - Health / launch
@@ -86,7 +86,7 @@ final class EngineClient {
             return
         }
         let python = EngineClient.engineDir.appendingPathComponent(".venv/bin/python").path
-        var script = EngineClient.engineDir.appendingPathComponent("whispertype_server.py").path
+        let script = EngineClient.engineDir.appendingPathComponent("whispertype_server.py").path
         // Prefer the copy bundled with this build if it is newer (dev convenience)
         if let bundled = Bundle.main.path(forResource: "whispertype_server", ofType: "py") {
             let fm = FileManager.default
@@ -146,7 +146,7 @@ final class EngineClient {
 
     // MARK: - Polish
 
-    struct FrontApp { let bundle: String; let name: String; let title: String }
+    struct FrontApp { let bundle: String; let name: String; let title: String; var pid: pid_t? = nil }
 
     /// Snapshot the app the user is typing into. Call BEFORE we do anything that could steal focus.
     static func captureFrontApp() -> FrontApp {
@@ -162,7 +162,7 @@ final class EngineClient {
                 }
             }
         }
-        return FrontApp(bundle: app.bundleIdentifier ?? "", name: app.localizedName ?? "", title: title)
+        return FrontApp(bundle: app.bundleIdentifier ?? "", name: app.localizedName ?? "", title: title, pid: app.processIdentifier)
     }
 
     func polish(text: String, app: FrontApp, styleOverride: String, completion: @escaping (Polished) -> Void) {
@@ -173,10 +173,10 @@ final class EngineClient {
         let body: [String: Any] = ["text": text, "app_bundle": app.bundle, "app_name": app.name,
                                    "window_title": app.title, "style": styleOverride]
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
-        session.dataTask(with: req) { data, _, err in
-            guard err == nil, let data = data,
+        session.dataTask(with: req) { data, response, err in
+            guard err == nil, (response as? HTTPURLResponse)?.statusCode == 200, let data = data,
                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let out = obj["text"] as? String, !out.isEmpty else {
+                  let out = obj["text"] as? String else {
                 logWarn("Engine", "polish failed (\(err?.localizedDescription ?? "bad response")), using raw text")
                 completion(Polished(text: text, style: "raw", ms: 0, usedLLM: false))
                 return

@@ -10,6 +10,16 @@ Iniyal WhisperType is a lightweight menu bar app that transcribes your voice and
 
 <!-- ![WhisperType Screenshot](screenshot.png) -->
 
+## 1.2.1 reliability fixes
+
+- Failed engine requests retain the WAV for CLI fallback. Auto language detection works in the fallback too.
+- Cleanup preserves empty scratch commands, explicit line breaks, literal vocabulary values, and command casing. Truncated responses or changed numbers fall back to the original text.
+- Clipboard restoration preserves all formats and skips restoration after a new copy. Switching apps during processing leaves the text available for manual paste and in History.
+- Right Option release works while Left Option remains held. Preview responses from an earlier recording are ignored. Microphone start failures return to idle with an error.
+- Installing an update restarts the local engine, including an orphan left by a previous force-quit.
+
+Regression checks: `swift test` and the engine venv's `python -B -m unittest discover -s server -p 'test_*.py'`. Python tests use a temporary home and mocked models; Swift clipboard tests use isolated pasteboards.
+
 ## What's new in 1.2 (local engine)
 
 - ⚡ **MLX engine** — whisper large-v3-turbo on Apple Silicon, warm in memory. 11 s of speech transcribes in ~0.6 s.

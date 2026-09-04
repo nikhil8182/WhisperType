@@ -10,7 +10,7 @@ ENTITLEMENTS="$PROJECT_DIR/WhisperType/WhisperType.entitlements"
 INSTALL_DIR="/Applications/$APP_NAME.app"
 
 echo "╔══════════════════════════════════════╗"
-echo "║    Iniyal WhisperType Build v1.2.0   ║"
+echo "║    Iniyal WhisperType Build v1.2.1   ║"
 echo "║    by Onwords Smart Solutions        ║"
 echo "╚══════════════════════════════════════╝"
 echo ""
@@ -98,7 +98,7 @@ echo "  ✅ Build complete!"
 echo "  📍 $APP_BUNDLE"
 echo "  📏 App size: $APP_SIZE"
 echo "  📏 Binary: $BINARY_SIZE"
-echo "  📋 Version: 1.2.0 (build 3)"
+echo "  📋 Version: 1.2.1 (build 4)"
 echo "═══════════════════════════════════════"
 
 # --- Step 6: Install (optional) ---
@@ -107,6 +107,9 @@ if [ "$1" = "--install" ] || [ "$1" = "-i" ]; then
     echo "📲 Installing to /Applications..."
     
     killall WhisperType 2>/dev/null || true
+    # A prior force-quit can leave the engine orphaned. Restart the installed
+    # engine too, so the new bundle cannot keep using old server code.
+    pkill -u "$(id -u)" -f '/IniyalWhisperType/engine/whispertype_server[.]py$' 2>/dev/null || true
     rm -rf "/Applications/WhisperType.app"   # retire the pre-rebrand bundle
     sleep 1
     

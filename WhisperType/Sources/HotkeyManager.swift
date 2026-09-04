@@ -12,9 +12,8 @@ class HotkeyManager {
     private var flagsMonitor: Any?
     private var localFlagsMonitor: Any?
     private var overlayWindow: OverlayWindowController?
-    private let lock = NSLock()
 
-    // state (main thread only, except reads under lock from event thread)
+    // Recording state is confined to the main thread.
     private var isRecording = false
     private var isProcessing = false
     private var handsFree = false
@@ -25,6 +24,7 @@ class HotkeyManager {
 
     // live preview
     private var partialTimer: Timer?
+    private var recordingID = UUID()
     private var partialInFlight = false
     private var lastPartialSeconds: Double = 0
     private var lastPartialText = ""
@@ -51,10 +51,16 @@ class HotkeyManager {
     private func handleFlagsChanged(_ event: NSEvent) {
         guard let appState = appState else { return }
         guard Int(event.keyCode) == appState.hotkeyKeyCode else { return }
-        let pressed = event.modifierFlags.contains(.option)
+        let pressed = Self.isHotkeyPressed(keyCode: Int(event.keyCode), flags: event.modifierFlags)
         DispatchQueue.main.async {
             if pressed { self.onKeyDown() } else { self.onKeyUp() }
         }
+    }
+
+    static func isHotkeyPressed(keyCode: Int, flags: NSEvent.ModifierFlags) -> Bool {
+        // Device-specific bits distinguish release while the OTHER Option key is held.
+        let mask: UInt = keyCode == 61 ? 0x40 : 0x20
+        return flags.rawValue & mask != 0
     }
 
     // MARK: - Key events (main thread)
@@ -111,9 +117,14 @@ class HotkeyManager {
         // Snapshot the target app BEFORE any UI of ours appears
         frontApp = EngineClient.captureFrontApp()
 
+        recordingStartTime = Date()
+        guard AudioRecorder.shared.startRecording() else {
+            handleFailure(message: "Could not start microphone recording. Check microphone access and input device.")
+            return
+        }
+        recordingID = UUID()
         isRecording = true
         handsFree = false
-        recordingStartTime = Date()
         lastPartialText = ""
         lastPartialSeconds = 0
         partialInFlight = false
@@ -122,7 +133,6 @@ class HotkeyManager {
         if appState.playSounds { SoundManager.shared.playStartSound() }
         if appState.showFloatingOverlay { showOverlay(text: "", kind: .recording) }
 
-        AudioRecorder.shared.startRecording()
         logInfo("HotkeyManager", "Recording started (target: \(frontApp.name) \(frontApp.bundle))")
 
         if appState.livePreview && appState.engineAvailable {
@@ -163,8 +173,9 @@ class HotkeyManager {
                 for v in f where abs(v) > m { m = abs(v) }
                 return m
             }
-            if (seconds < 0.4 && audioURL == nil) || peak < 0.015 {
+            if audioURL == nil && pcm.isEmpty || (!pcm.isEmpty && peak < 0.015) {
                 logInfo("HotkeyManager", "Nothing heard (\(String(format: "%.1f", seconds))s, peak \(String(format: "%.3f", peak))), skipping")
+                if let url = audioURL { try? FileManager.default.removeItem(at: url) }
                 self.resetState(); appState.setStatus(.idle); self.hideOverlay()
                 return
             }
@@ -176,38 +187,41 @@ class HotkeyManager {
             if appState.engineAvailable && pcm.count > 16000 {
                 EngineClient.shared.transcribe(pcm: pcm, language: appState.language, partial: false) { [weak self] result in
                     guard let self = self else { return }
-                    if let url = audioURL { try? FileManager.default.removeItem(at: url) }
                     DispatchQueue.main.async {
                         switch result {
                         case .success(let t):
+                            if let url = audioURL { try? FileManager.default.removeItem(at: url) }
                             logInfo("HotkeyManager", "Engine transcribed in \(t.ms)ms: \(t.text.prefix(80))")
                             self.deliver(raw: t.text, duration: duration, engine: "turbo", target: target)
                         case .failure(let e):
                             logError("HotkeyManager", "Engine transcription failed: \(e.localizedDescription)")
-                            self.handleFailure(message: "Transcription failed: \(e.localizedDescription)")
+                            self.transcribeFallback(audioURL: audioURL, duration: duration, target: target)
                         }
                     }
                 }
                 return
             }
 
-            // Fallback: whisper CLI on the WAV
-            guard let audioURL = audioURL else {
-                self.handleFailure(message: "Recording failed — no audio file")
-                return
-            }
-            logInfo("HotkeyManager", "Engine unavailable → whisper CLI fallback")
-            WhisperManager.shared.transcribe(audioURL: audioURL, model: appState.whisperModel, language: appState.language) { [weak self] result in
+            self.transcribeFallback(audioURL: audioURL, duration: duration, target: target)
+        }
+    }
+
+    private func transcribeFallback(audioURL: URL?, duration: TimeInterval, target: EngineClient.FrontApp) {
+        guard let appState = appState else { return }
+        guard let audioURL = audioURL else {
+            handleFailure(message: "Recording failed: no audio file for fallback")
+            return
+        }
+        logInfo("HotkeyManager", "Using whisper CLI fallback")
+        WhisperManager.shared.transcribe(audioURL: audioURL, model: appState.whisperModel, language: appState.language) { [weak self] result in
+            try? FileManager.default.removeItem(at: audioURL)
+            DispatchQueue.main.async {
                 guard let self = self else { return }
-                try? FileManager.default.removeItem(at: audioURL)
-                DispatchQueue.main.async {
-                    switch result {
-                    case .success(let text):
-                        self.deliver(raw: text, duration: duration, engine: appState.whisperModel, target: target)
-                    case .failure(let error):
-                        logError("HotkeyManager", "Transcription failed: \(error.localizedDescription)")
-                        self.handleFailure(message: "Transcription failed: \(error.localizedDescription)")
-                    }
+                switch result {
+                case .success(let text):
+                    self.deliver(raw: text, duration: duration, engine: appState.whisperModel, target: target)
+                case .failure(let error):
+                    self.handleFailure(message: "Transcription failed: \(error.localizedDescription)")
                 }
             }
         }
@@ -225,10 +239,14 @@ class HotkeyManager {
 
         let finish: (String, String) -> Void = { [weak self] text, label in
             guard let self = self else { return }
+            guard !text.isEmpty else {
+                self.resetState(); appState.setStatus(.idle); self.hideOverlay()
+                return
+            }
             self.consecutiveFailures = 0
             appState.addToHistory(TranscriptionEntry(text: text, duration: duration, model: label))
             self.hideOverlay()
-            TextPaster.shared.pasteText(text)
+            TextPaster.shared.pasteText(text, targetPID: target.pid)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
                 self.resetState()
                 appState.setStatus(.idle)
@@ -256,10 +274,11 @@ class HotkeyManager {
         guard secs >= 1.0, secs - lastPartialSeconds >= 0.8 else { return }
         partialInFlight = true
         lastPartialSeconds = secs
+        let requestRecordingID = recordingID
         let pcm = AudioRecorder.shared.snapshotPCM()
         EngineClient.shared.transcribe(pcm: pcm, language: appState.language, partial: true) { [weak self] result in
             DispatchQueue.main.async {
-                guard let self = self else { return }
+                guard let self = self, self.recordingID == requestRecordingID else { return }
                 self.partialInFlight = false
                 guard self.isRecording else { return }
                 if case .success(let t) = result, !t.text.isEmpty {
